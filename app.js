@@ -1,8 +1,9 @@
 const DB_NAME = "myerp-local";
 const DB_VERSION = 1;
 const STORE = "records";
-const labels = {dashboard:"Panoramica",crm:"CRM",contacts:"Contatti",sales:"Vendite",purchases:"Acquisti",inventory:"Magazzino",invoices:"Fatturazione",activities:"Attività",documents:"Documenti",reports:"Report",backup:"Backup e ripristino"};
+const labels = {dashboard:"Panoramica",crm:"CRM",contacts:"Contatti",sales:"Vendite",purchases:"Acquisti",inventory:"Magazzino",invoices:"Fatturazione",activities:"Attività",documents:"Documenti",cashbook:"Prima nota",reports:"Report",backup:"Backup e ripristino"};
 let db;
+let cashBookSearch="",cashBookFilter="all",editingCashEntryId=null;
 let currentView = "dashboard";
 let contactSearch = "";
 let editingContactId = null;
@@ -513,6 +514,31 @@ async function renderDocuments(records){
  root.querySelectorAll(".doc-delete").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare il documento archiviato?")){await deleteRecord(Number(b.dataset.id));await render()}});
 }
 
+async function renderCashBook(records){
+ const root=document.getElementById("view"),entries=records.filter(r=>r.type==="cash_entry"),editing=entries.find(x=>x.id===editingCashEntryId),v=k=>editing?(editing[k]??""):"";
+ const term=cashBookSearch.trim().toLocaleLowerCase(),filtered=entries.filter(x=>(cashBookFilter==="all"||x.direction===cashBookFilter)&&[x.description,x.category,x.reference,x.method].join(" ").toLocaleLowerCase().includes(term));
+ const income=filtered.filter(x=>x.direction==="in").reduce((n,x)=>n+(Number(x.amount)||0),0),expense=filtered.filter(x=>x.direction==="out").reduce((n,x)=>n+(Number(x.amount)||0),0);
+ const methods=["Contanti","Bonifico","Carta","Assegno","Altro"],categories=["Vendita","Incasso fattura","Acquisto","Spesa operativa","Trasporto","Imposte e contributi","Stipendi","Altro"];
+ root.innerHTML='<div class="grid"><div class="metric"><small>Entrate (filtro attuale)</small><strong>'+invoiceFmt(income)+'</strong></div><div class="metric"><small>Uscite (filtro attuale)</small><strong>'+invoiceFmt(expense)+'</strong></div><div class="metric"><small>Saldo netto (filtro attuale)</small><strong>'+invoiceFmt(income-expense)+'</strong></div></div>'+
+ '<div class="panel"><h2>'+(editing?"Modifica movimento":"Nuova registrazione")+'</h2><p class="muted">Prima nota semplice: annota entrate e uscite di cassa o banca. Le registrazioni sono indipendenti dalle fatture.</p><form id="cash-form"><div class="form-grid">'+
+ '<div><label class="form-label">Movimento</label><select class="field" id="cash-direction"><option value="in" '+(v("direction")!=="out"?"selected":"")+'>Entrata</option><option value="out" '+(v("direction")==="out"?"selected":"")+'>Uscita</option></select></div>'+
+ '<div><label class="form-label">Data *</label><input class="field" id="cash-date" type="date" required value="'+escapeHtml(v("date")||new Date().toISOString().slice(0,10))+'"></div>'+
+ '<div class="form-wide"><label class="form-label">Descrizione *</label><input class="field" id="cash-description" maxlength="180" required value="'+escapeHtml(v("description"))+'" placeholder="Es. Incasso cliente / pagamento fornitore"></div>'+
+ '<div><label class="form-label">Categoria</label><select class="field" id="cash-category">'+categories.map(c=>'<option '+((v("category")||"Altro")===c?"selected":"")+'>'+c+'</option>').join("")+'</select></div>'+
+ '<div><label class="form-label">Metodo</label><select class="field" id="cash-method">'+methods.map(m=>'<option '+((v("method")||"Bonifico")===m?"selected":"")+'>'+m+'</option>').join("")+'</select></div>'+
+ '<div><label class="form-label">Importo (€) *</label><input class="field" id="cash-amount" type="number" min="0.01" step="0.01" required value="'+escapeHtml(v("amount"))+'" placeholder="0,00"></div>'+
+ '<div><label class="form-label">Riferimento</label><input class="field" id="cash-reference" maxlength="120" value="'+escapeHtml(v("reference"))+'" placeholder="Numero documento o operazione"></div>'+
+ '<div class="form-wide"><label class="form-label">Note</label><textarea class="field" id="cash-notes" rows="2" maxlength="1000">'+escapeHtml(v("notes"))+'</textarea></div></div><div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Registra movimento")+'</button>'+(editing?'<button class="action secondary" id="cash-cancel" type="button">Annulla</button>':"")+'</div></form></div>'+
+ '<div class="panel"><h2>Prima nota</h2><input class="field" id="cash-search" type="search" placeholder="Cerca descrizione, categoria o riferimento" value="'+escapeHtml(cashBookSearch)+'"><select class="field" id="cash-filter"><option value="all">Entrate e uscite</option><option value="in" '+(cashBookFilter==="in"?"selected":"")+'>Solo entrate</option><option value="out" '+(cashBookFilter==="out"?"selected":"")+'>Solo uscite</option></select>'+
+ (filtered.length?filtered.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")||b.id-a.id).map(x=>'<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+escapeHtml(x.description)+'</strong><div class="muted">'+(x.direction==="in"?"Entrata":"Uscita")+' · '+escapeHtml(x.category||"Altro")+' · '+escapeHtml(x.method||"—")+'</div><div class="contact-details"><span>Data: '+escapeHtml(x.date||"—")+'</span><span>Importo: '+invoiceFmt(x.amount)+'</span>'+(x.reference?'<span>Rif.: '+escapeHtml(x.reference)+'</span>':"")+(x.notes?'<span>'+escapeHtml(x.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary cash-edit" data-id="'+x.id+'">Modifica</button><button class="action danger cash-delete" data-id="'+x.id+'">Elimina</button></div></article>').join(""):'<div class="empty">Nessun movimento registrato.</div>')+'</div>';
+ document.getElementById("cash-form").onsubmit=async e=>{e.preventDefault();const amount=Math.round(Number(document.getElementById("cash-amount").value)*100)/100,description=document.getElementById("cash-description").value.trim();if(!description||!Number.isFinite(amount)||amount<=0){alert("Inserisci una descrizione e un importo positivo.");return}const item={type:"cash_entry",direction:document.getElementById("cash-direction").value,date:document.getElementById("cash-date").value,description,category:document.getElementById("cash-category").value,method:document.getElementById("cash-method").value,amount,reference:document.getElementById("cash-reference").value.trim(),notes:document.getElementById("cash-notes").value.trim()};if(editing){item.id=editing.id;item.createdAt=editing.createdAt;item.updatedAt=new Date().toISOString();await updateRecord(item)}else await addRecord(item);editingCashEntryId=null;await render()};
+ const cancel=document.getElementById("cash-cancel");if(cancel)cancel.onclick=()=>{editingCashEntryId=null;render()};
+ document.getElementById("cash-search").oninput=e=>{cashBookSearch=e.target.value;const p=e.target.selectionStart;render().then(()=>{const el=document.getElementById("cash-search");el.focus();el.setSelectionRange(p,p)})};
+ document.getElementById("cash-filter").onchange=e=>{cashBookFilter=e.target.value;render()};
+ root.querySelectorAll(".cash-edit").forEach(b=>b.onclick=()=>{editingCashEntryId=Number(b.dataset.id);render()});
+ root.querySelectorAll(".cash-delete").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare questa registrazione?")){await deleteRecord(Number(b.dataset.id));render()}});
+}
+
 async function render(){
   const root=document.getElementById("view");
   const records=await allRecords();
@@ -528,6 +554,7 @@ async function render(){
     root.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>setView(b.dataset.go));
     return;
   }
+  if(currentView==="cashbook"){await renderCashBook(records);return}
   if(currentView==="reports"){
     const sales=records.filter(r=>r.type==="sales"),purchases=records.filter(r=>r.type==="purchases"),invoices=records.filter(r=>r.type==="invoices"),crm=records.filter(r=>r.type==="crm"),products=records.filter(r=>r.type==="inventory_product"),moves=records.filter(r=>r.type==="inventory_move");
     const balance=invoices.reduce((n,x)=>n+Math.max(0,(Number(x.total)||0)-(Number(x.paid)||0)),0);
