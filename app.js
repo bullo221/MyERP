@@ -208,6 +208,71 @@ async function renderSales(records){
   root.querySelectorAll(".delete-sale").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare definitivamente questo documento di vendita?")){await deleteRecord(Number(b.dataset.id));render()}});
 }
 
+
+let purchaseSearch="";
+let purchaseStatusFilter="all";
+let editingPurchaseId=null;
+let purchaseDraftLines=[];
+const purchaseStatuses={draft:"Bozza",ordered:"Ordinato",received:"Ricevuto",cancelled:"Annullato"};
+function purchaseMoney(value){return new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(Number(value)||0)}
+function purchaseTotal(lines){return lines.reduce((sum,line)=>sum+(Math.max(0,Number(line.quantity)||0)*Math.max(0,Number(line.price)||0)),0)}
+function renderPurchaseLines(){
+  const host=document.getElementById("purchase-lines");
+  if(!host)return;
+  host.innerHTML=purchaseDraftLines.map((line,i)=>'<div class="form-grid purchase-line"><div class="form-wide"><label class="form-label">Prodotto / servizio</label><input class="field purchase-description" maxlength="160" value="'+escapeHtml(line.description)+'" placeholder="Descrizione articolo"></div><div><label class="form-label">Quantità</label><input class="field purchase-quantity" type="number" min="0.01" step="0.01" value="'+escapeHtml(line.quantity)+'"></div><div><label class="form-label">Costo unitario (€)</label><input class="field purchase-price" type="number" min="0" step="0.01" value="'+escapeHtml(line.price)+'"></div><div><label class="form-label">Totale riga</label><strong class="purchase-line-total">'+purchaseMoney((Number(line.quantity)||0)*(Number(line.price)||0))+'</strong><button class="action danger purchase-remove" type="button" data-index="'+i+'">Rimuovi riga</button></div></div>').join("");
+  host.querySelectorAll(".purchase-line").forEach((row,i)=>{
+    [["description",".purchase-description"],["quantity",".purchase-quantity"],["price",".purchase-price"]].forEach(([key,selector])=>row.querySelector(selector).oninput=e=>{
+      purchaseDraftLines[i][key]=e.target.value;
+      row.querySelector(".purchase-line-total").textContent=purchaseMoney((Number(purchaseDraftLines[i].quantity)||0)*(Number(purchaseDraftLines[i].price)||0));
+      document.getElementById("purchase-grand-total").textContent=purchaseMoney(purchaseTotal(purchaseDraftLines));
+    });
+  });
+  host.querySelectorAll(".purchase-remove").forEach(b=>b.onclick=()=>{purchaseDraftLines.splice(Number(b.dataset.index),1);renderPurchaseLines();document.getElementById("purchase-grand-total").textContent=purchaseMoney(purchaseTotal(purchaseDraftLines))});
+  document.getElementById("purchase-grand-total").textContent=purchaseMoney(purchaseTotal(purchaseDraftLines));
+}
+async function renderPurchases(records){
+  const root=document.getElementById("view");
+  const purchases=records.filter(r=>r.type==="purchases");
+  const contacts=records.filter(r=>r.type==="contacts");
+  const editing=editingPurchaseId===null?null:purchases.find(p=>p.id===editingPurchaseId);
+  const val=k=>editing?(editing[k]??""):"";
+  if(editing)purchaseDraftLines=(editing.lines||[]).map(x=>({...x}));
+  else if(!purchaseDraftLines.length)purchaseDraftLines=[{description:"",quantity:1,price:0}];
+  const supplierOptions='<option value="">— Seleziona fornitore —</option>'+contacts.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<option value="'+c.id+'" '+(String(val("supplierId"))===String(c.id)?"selected":"")+'>'+escapeHtml(c.name)+(c.company?" · "+escapeHtml(c.company):"")+'</option>').join("");
+  const term=purchaseSearch.trim().toLocaleLowerCase();
+  const filtered=purchases.filter(p=>(purchaseStatusFilter==="all"||p.status===purchaseStatusFilter)&&[p.name,p.number,contacts.find(c=>c.id===p.supplierId)?.name].join(" ").toLocaleLowerCase().includes(term));
+  const sum=purchases.reduce((n,p)=>n+(Number(p.total)||0),0);
+  root.innerHTML='<div class="grid"><div class="metric"><small>Documenti acquisto</small><strong>'+purchases.length+'</strong></div><div class="metric"><small>Valore complessivo</small><strong>'+purchaseMoney(sum)+'</strong></div><div class="metric"><small>Ordini da ricevere</small><strong>'+purchases.filter(p=>p.status==="ordered").length+'</strong></div></div>'+
+  '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifica acquisto":"Nuova richiesta / ordine fornitore")+'</h2><p class="muted">Registra gli acquisti e controlla la ricezione della merce o dei servizi.</p></div></div>'+
+  '<form id="purchase-form"><div class="form-grid"><div class="form-wide"><label class="form-label" for="purchase-title">Oggetto / riferimento *</label><input class="field" id="purchase-title" required maxlength="180" value="'+escapeHtml(val("name"))+'" placeholder="Es. Acquisto materiale ufficio"></div>'+
+  '<div><label class="form-label" for="purchase-supplier">Fornitore</label><select class="field" id="purchase-supplier">'+supplierOptions+'</select></div>'+
+  '<div><label class="form-label" for="purchase-status">Stato</label><select class="field" id="purchase-status">'+Object.entries(purchaseStatuses).map(([k,v])=>'<option value="'+k+'" '+(val("status")===k||(!val("status")&&k==="draft")?"selected":"")+'>'+v+'</option>').join("")+'</select></div>'+
+  '<div><label class="form-label" for="purchase-date">Data ordine</label><input class="field" type="date" id="purchase-date" value="'+escapeHtml(val("date")||new Date().toISOString().slice(0,10))+'"></div>'+
+  '<div><label class="form-label" for="purchase-delivery">Consegna prevista</label><input class="field" type="date" id="purchase-delivery" value="'+escapeHtml(val("expectedDelivery"))+'"></div>'+
+  '<div class="form-wide"><h3>Righe acquisto</h3><div id="purchase-lines"></div><button class="action secondary" type="button" id="purchase-add-line">Aggiungi riga</button><p>Totale acquisto: <strong id="purchase-grand-total">'+purchaseMoney(purchaseTotal(purchaseDraftLines))+'</strong></p></div>'+
+  '<div class="form-wide"><label class="form-label" for="purchase-notes">Note</label><textarea class="field" id="purchase-notes" rows="3" maxlength="1500">'+escapeHtml(val("notes"))+'</textarea></div></div>'+
+  '<div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Salva acquisto")+'</button>'+(editing?'<button class="action secondary" type="button" id="purchase-cancel">Annulla</button>':"")+'</div></form></div>'+
+  '<div class="panel"><div class="panel-heading"><div><h2>Richieste e ordini fornitore</h2><p class="muted">'+filtered.length+' documenti visualizzati</p></div></div><div class="form-grid"><div><label class="form-label" for="purchase-search">Cerca</label><input class="field" id="purchase-search" type="search" value="'+escapeHtml(purchaseSearch)+'" placeholder="Numero, oggetto o fornitore"></div><div><label class="form-label" for="purchase-filter">Stato</label><select class="field" id="purchase-filter"><option value="all">Tutti gli stati</option>'+Object.entries(purchaseStatuses).map(([k,v])=>'<option value="'+k+'" '+(purchaseStatusFilter===k?"selected":"")+'>'+v+'</option>').join("")+'</select></div></div>'+
+  (filtered.length?filtered.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(p=>{const c=contacts.find(x=>x.id===p.supplierId);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+escapeHtml(p.number||"Acquisto")+' · '+escapeHtml(p.name)+'</strong><div class="muted">'+escapeHtml(purchaseStatuses[p.status]||"Bozza")+(c?" · "+escapeHtml(c.name):" · Fornitore non specificato")+'</div><div class="contact-details"><span>Data: '+escapeHtml(p.date||"—")+'</span><span>Totale: '+purchaseMoney(p.total)+'</span>'+(p.expectedDelivery?'<span>Consegna prevista: '+escapeHtml(p.expectedDelivery)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-purchase" data-id="'+p.id+'">Modifica</button><button class="action danger delete-purchase" data-id="'+p.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">Nessun acquisto trovato.</div>')+'</div>';
+  renderPurchaseLines();
+  document.getElementById("purchase-add-line").onclick=()=>{purchaseDraftLines.push({description:"",quantity:1,price:0});renderPurchaseLines()};
+  document.getElementById("purchase-form").onsubmit=async e=>{
+    e.preventDefault();
+    const name=document.getElementById("purchase-title").value.trim();
+    const lines=purchaseDraftLines.map(x=>({description:String(x.description||"").trim(),quantity:Number(x.quantity)||0,price:Number(x.price)||0}));
+    if(!name||!lines.length||lines.some(x=>!x.description||x.quantity<=0||x.price<0)){alert("Completa le righe: descrizione, quantità positiva e costo non negativo.");return}
+    const purchase={type:"purchases",name,supplierId:document.getElementById("purchase-supplier").value?Number(document.getElementById("purchase-supplier").value):null,status:document.getElementById("purchase-status").value,date:document.getElementById("purchase-date").value,expectedDelivery:document.getElementById("purchase-delivery").value,lines,total:purchaseTotal(lines),notes:document.getElementById("purchase-notes").value.trim()};
+    if(editing){purchase.id=editing.id;purchase.number=editing.number;purchase.createdAt=editing.createdAt;purchase.updatedAt=new Date().toISOString();await updateRecord(purchase)}
+    else{const id=await addRecord(purchase);purchase.id=id;purchase.number="ACQ-"+String(id).padStart(5,"0");await updateRecord(purchase)}
+    editingPurchaseId=null;purchaseDraftLines=[];purchaseSearch="";purchaseStatusFilter="all";await render();
+  };
+  const cancel=document.getElementById("purchase-cancel");if(cancel)cancel.onclick=()=>{editingPurchaseId=null;purchaseDraftLines=[];render()};
+  document.getElementById("purchase-search").oninput=e=>{purchaseSearch=e.target.value;const pos=e.target.selectionStart;render().then(()=>{const el=document.getElementById("purchase-search");el.focus();el.setSelectionRange(pos,pos)})};
+  document.getElementById("purchase-filter").onchange=e=>{purchaseStatusFilter=e.target.value;render()};
+  root.querySelectorAll(".edit-purchase").forEach(b=>b.onclick=()=>{editingPurchaseId=Number(b.dataset.id);purchaseDraftLines=[];render()});
+  root.querySelectorAll(".delete-purchase").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare definitivamente questo documento di acquisto?")){await deleteRecord(Number(b.dataset.id));render()}});
+}
+
 async function render(){
   const root=document.getElementById("view");
   const records=await allRecords();
@@ -224,6 +289,7 @@ async function render(){
   if(currentView==="contacts"){await renderContacts(records);return}
   if(currentView==="crm"){await renderCRM(records);return}
   if(currentView==="sales"){await renderSales(records);return}
+  if(currentView==="purchases"){await renderPurchases(records);return}
   const moduleRecords=records.filter(r=>r.type===currentView);
   const descriptions={crm:"Gestione delle opportunità e del rapporto con i potenziali clienti.",sales:"Preventivi, ordini cliente e flusso delle vendite.",purchases:"Richieste, ordini fornitore e acquisti.",inventory:"Prodotti, giacenze e movimenti di magazzino.",invoices:"Fatture clienti e fornitori, con stato dei pagamenti.",activities:"Promemoria, appuntamenti e attività da completare.",documents:"Archivio dei documenti collegati alle attività aziendali."};
   root.innerHTML='<div class="panel"><h2>'+labels[currentView]+'</h2><p class="muted">'+(descriptions[currentView]||"Sezione del gestionale.")+'</p><form id="new-record"><label class="muted" for="record-name">Nome o descrizione</label><input class="field" id="record-name" maxlength="120" required placeholder="Inserisci un nome o una descrizione"><label class="muted" for="record-notes">Note (facoltative)</label><input class="field" id="record-notes" maxlength="500" placeholder="Aggiungi dettagli"><button class="action" type="submit">Crea</button></form></div><div class="panel"><h2>Elementi</h2>'+(moduleRecords.length?moduleRecords.map(r=>'<div class="record"><strong>'+escapeHtml(r.name)+'</strong>'+(r.notes?'<div class="muted">'+escapeHtml(r.notes)+'</div>':"")+'</div>').join(""):'<div class="empty">Nessun elemento presente. Le funzioni specifiche di questo modulo verranno sviluppate nelle prossime fasi.</div>')+'</div>';
