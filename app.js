@@ -148,6 +148,66 @@ async function renderCRM(records){
   root.querySelectorAll(".delete-opportunity").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare definitivamente questa opportunità?")){await deleteRecord(Number(b.dataset.id));await render()}});
 }
 
+
+let salesSearch="";
+let salesStatusFilter="all";
+let editingSaleId=null;
+let saleDraftLines=[];
+const saleStatuses={draft:"Bozza",sent:"Inviato",confirmed:"Confermato",delivered:"Consegnato",cancelled:"Annullato"};
+function saleNumber(value){return new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(Number(value)||0)}
+function saleTotals(lines){return lines.reduce((sum,line)=>{const qty=Math.max(0,Number(line.quantity)||0),price=Math.max(0,Number(line.price)||0),discount=Math.min(100,Math.max(0,Number(line.discount)||0));return sum+qty*price*(1-discount/100)},0)}
+function renderSaleLines(){
+  const host=document.getElementById("sale-lines");
+  if(!host)return;
+  host.innerHTML=saleDraftLines.map((line,i)=>'<div class="form-grid sale-line" data-line="'+i+'"><div class="form-wide"><label class="form-label">Prodotto / servizio</label><input class="field sale-description" maxlength="160" value="'+escapeHtml(line.description)+'" placeholder="Descrizione articolo"></div><div><label class="form-label">Quantità</label><input class="field sale-quantity" type="number" min="0.01" step="0.01" value="'+escapeHtml(line.quantity)+'"></div><div><label class="form-label">Prezzo unitario (€)</label><input class="field sale-price" type="number" min="0" step="0.01" value="'+escapeHtml(line.price)+'"></div><div><label class="form-label">Sconto (%)</label><input class="field sale-discount" type="number" min="0" max="100" step="0.1" value="'+escapeHtml(line.discount)+'"></div><div><label class="form-label">Totale riga</label><strong class="sale-line-total">'+saleNumber((Number(line.quantity)||0)*(Number(line.price)||0)*(1-(Number(line.discount)||0)/100))+'</strong><button class="action danger sale-remove" type="button" data-index="'+i+'">Rimuovi riga</button></div></div>').join("");
+  host.querySelectorAll(".sale-line").forEach((row,i)=>{
+    ["description","quantity","price","discount"].forEach(key=>{const cls={description:".sale-description",quantity:".sale-quantity",price:".sale-price",discount:".sale-discount"}[key];row.querySelector(cls).oninput=e=>{saleDraftLines[i][key]=e.target.value;const total=(Number(saleDraftLines[i].quantity)||0)*(Number(saleDraftLines[i].price)||0)*(1-(Number(saleDraftLines[i].discount)||0)/100);row.querySelector(".sale-line-total").textContent=saleNumber(total);document.getElementById("sale-grand-total").textContent=saleNumber(saleTotals(saleDraftLines))}});
+  });
+  host.querySelectorAll(".sale-remove").forEach(b=>b.onclick=()=>{saleDraftLines.splice(Number(b.dataset.index),1);renderSaleLines();document.getElementById("sale-grand-total").textContent=saleNumber(saleTotals(saleDraftLines))});
+  document.getElementById("sale-grand-total").textContent=saleNumber(saleTotals(saleDraftLines));
+}
+async function renderSales(records){
+  const root=document.getElementById("view");
+  const sales=records.filter(r=>r.type==="sales");
+  const contacts=records.filter(r=>r.type==="contacts");
+  const editing=editingSaleId===null?null:sales.find(s=>s.id===editingSaleId);
+  const val=k=>editing?(editing[k]??""):"";
+  if(editing)saleDraftLines=(editing.lines||[]).map(x=>({...x}));else if(!saleDraftLines.length)saleDraftLines=[{description:"",quantity:1,price:0,discount:0}];
+  const contactOptions='<option value="">— Seleziona cliente —</option>'+contacts.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<option value="'+c.id+'" '+(String(val("contactId"))===String(c.id)?"selected":"")+'>'+escapeHtml(c.name)+(c.company?" · "+escapeHtml(c.company):"")+'</option>').join("");
+  const term=salesSearch.trim().toLocaleLowerCase();
+  const filtered=sales.filter(s=>(salesStatusFilter==="all"||s.status===salesStatusFilter)&&[s.name,s.number,contacts.find(c=>c.id===s.contactId)?.name].join(" ").toLocaleLowerCase().includes(term));
+  const total=sales.reduce((n,s)=>n+(Number(s.total)||0),0);
+  root.innerHTML='<div class="grid"><div class="metric"><small>Documenti vendita</small><strong>'+sales.length+'</strong></div><div class="metric"><small>Valore complessivo</small><strong>'+saleNumber(total)+'</strong></div><div class="metric"><small>Confermati</small><strong>'+sales.filter(s=>s.status==="confirmed").length+'</strong></div></div>'+
+  '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifica documento":"Nuovo preventivo / ordine")+'</h2><p class="muted">Crea un preventivo e aggiornane lo stato fino alla conferma o consegna.</p></div></div>'+
+  '<form id="sales-form"><div class="form-grid"><div class="form-wide"><label class="form-label" for="sale-title">Oggetto / riferimento *</label><input class="field" id="sale-title" required maxlength="180" value="'+escapeHtml(val("name"))+'" placeholder="Es. Fornitura materiali"></div>'+
+  '<div><label class="form-label" for="sale-customer">Cliente</label><select class="field" id="sale-customer">'+contactOptions+'</select></div>'+
+  '<div><label class="form-label" for="sale-status">Stato</label><select class="field" id="sale-status">'+Object.entries(saleStatuses).map(([k,v])=>'<option value="'+k+'" '+(val("status")===(k)||(!val("status")&&k==="draft")?"selected":"")+'>'+v+'</option>').join("")+'</select></div>'+
+  '<div><label class="form-label" for="sale-date">Data documento</label><input class="field" type="date" id="sale-date" value="'+escapeHtml(val("date")||new Date().toISOString().slice(0,10))+'"></div>'+
+  '<div><label class="form-label" for="sale-validity">Valido fino al</label><input class="field" type="date" id="sale-validity" value="'+escapeHtml(val("validUntil"))+'"></div>'+
+  '<div class="form-wide"><h3>Righe documento</h3><div id="sale-lines"></div><button class="action secondary" type="button" id="sale-add-line">Aggiungi riga</button><p>Totale documento: <strong id="sale-grand-total">'+saleNumber(saleTotals(saleDraftLines))+'</strong></p></div>'+
+  '<div class="form-wide"><label class="form-label" for="sale-notes">Note</label><textarea class="field" id="sale-notes" rows="3" maxlength="1500">'+escapeHtml(val("notes"))+'</textarea></div></div>'+
+  '<div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Salva documento")+'</button>'+(editing?'<button class="action secondary" type="button" id="sale-cancel">Annulla</button>':"")+'</div></form></div>'+
+  '<div class="panel"><div class="panel-heading"><div><h2>Preventivi e ordini</h2><p class="muted">'+filtered.length+' documenti visualizzati</p></div></div><div class="form-grid"><div><label class="form-label" for="sales-search">Cerca</label><input class="field" id="sales-search" type="search" value="'+escapeHtml(salesSearch)+'" placeholder="Numero, oggetto o cliente"></div><div><label class="form-label" for="sales-filter">Stato</label><select class="field" id="sales-filter"><option value="all">Tutti gli stati</option>'+Object.entries(saleStatuses).map(([k,v])=>'<option value="'+k+'" '+(salesStatusFilter===k?"selected":"")+'>'+v+'</option>').join("")+'</select></div></div>'+
+  (filtered.length?filtered.slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")).map(s=>{const c=contacts.find(x=>x.id===s.contactId);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+escapeHtml(s.number||"Preventivo")+' · '+escapeHtml(s.name)+'</strong><div class="muted">'+escapeHtml(saleStatuses[s.status]||"Bozza")+(c?" · "+escapeHtml(c.name):" · Cliente non specificato")+'</div><div class="contact-details"><span>Data: '+escapeHtml(s.date||"—")+'</span><span>Totale: '+saleNumber(s.total)+'</span>'+(s.validUntil?'<span>Valido fino al: '+escapeHtml(s.validUntil)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-sale" data-id="'+s.id+'">Modifica</button><button class="action danger delete-sale" data-id="'+s.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">Nessun documento vendita trovato.</div>')+'</div>';
+  renderSaleLines();
+  document.getElementById("sale-add-line").onclick=()=>{saleDraftLines.push({description:"",quantity:1,price:0,discount:0});renderSaleLines()};
+  document.getElementById("sales-form").onsubmit=async e=>{
+    e.preventDefault();
+    const name=document.getElementById("sale-title").value.trim();
+    const lines=saleDraftLines.map(x=>({description:String(x.description||"").trim(),quantity:Number(x.quantity)||0,price:Number(x.price)||0,discount:Number(x.discount)||0}));
+    if(!name||!lines.length||lines.some(x=>!x.description||x.quantity<=0||x.price<0||x.discount<0||x.discount>100)){alert("Completa le righe: descrizione, quantità positiva, prezzo e sconto tra 0 e 100%.");return}
+    const sale={type:"sales",name,contactId:document.getElementById("sale-customer").value?Number(document.getElementById("sale-customer").value):null,status:document.getElementById("sale-status").value,date:document.getElementById("sale-date").value,validUntil:document.getElementById("sale-validity").value,lines,total:saleTotals(lines),notes:document.getElementById("sale-notes").value.trim()};
+    if(editing){sale.id=editing.id;sale.number=editing.number;sale.createdAt=editing.createdAt;sale.updatedAt=new Date().toISOString();await updateRecord(sale)}
+    else{const id=await addRecord(sale);sale.id=id;sale.number="PREV-"+String(id).padStart(5,"0");await updateRecord(sale)}
+    editingSaleId=null;saleDraftLines=[];salesSearch="";salesStatusFilter="all";await render();
+  };
+  const cancel=document.getElementById("sale-cancel");if(cancel)cancel.onclick=()=>{editingSaleId=null;saleDraftLines=[];render()};
+  document.getElementById("sales-search").oninput=e=>{salesSearch=e.target.value;const pos=e.target.selectionStart;render().then(()=>{const el=document.getElementById("sales-search");el.focus();el.setSelectionRange(pos,pos)})};
+  document.getElementById("sales-filter").onchange=e=>{salesStatusFilter=e.target.value;render()};
+  root.querySelectorAll(".edit-sale").forEach(b=>b.onclick=()=>{editingSaleId=Number(b.dataset.id);saleDraftLines=[];render()});
+  root.querySelectorAll(".delete-sale").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare definitivamente questo documento di vendita?")){await deleteRecord(Number(b.dataset.id));render()}});
+}
+
 async function render(){
   const root=document.getElementById("view");
   const records=await allRecords();
@@ -163,6 +223,7 @@ async function render(){
   }
   if(currentView==="contacts"){await renderContacts(records);return}
   if(currentView==="crm"){await renderCRM(records);return}
+  if(currentView==="sales"){await renderSales(records);return}
   const moduleRecords=records.filter(r=>r.type===currentView);
   const descriptions={crm:"Gestione delle opportunità e del rapporto con i potenziali clienti.",sales:"Preventivi, ordini cliente e flusso delle vendite.",purchases:"Richieste, ordini fornitore e acquisti.",inventory:"Prodotti, giacenze e movimenti di magazzino.",invoices:"Fatture clienti e fornitori, con stato dei pagamenti.",activities:"Promemoria, appuntamenti e attività da completare.",documents:"Archivio dei documenti collegati alle attività aziendali."};
   root.innerHTML='<div class="panel"><h2>'+labels[currentView]+'</h2><p class="muted">'+(descriptions[currentView]||"Sezione del gestionale.")+'</p><form id="new-record"><label class="muted" for="record-name">Nome o descrizione</label><input class="field" id="record-name" maxlength="120" required placeholder="Inserisci un nome o una descrizione"><label class="muted" for="record-notes">Note (facoltative)</label><input class="field" id="record-notes" maxlength="500" placeholder="Aggiungi dettagli"><button class="action" type="submit">Crea</button></form></div><div class="panel"><h2>Elementi</h2>'+(moduleRecords.length?moduleRecords.map(r=>'<div class="record"><strong>'+escapeHtml(r.name)+'</strong>'+(r.notes?'<div class="muted">'+escapeHtml(r.notes)+'</div>':"")+'</div>').join(""):'<div class="empty">Nessun elemento presente. Le funzioni specifiche di questo modulo verranno sviluppate nelle prossime fasi.</div>')+'</div>';
