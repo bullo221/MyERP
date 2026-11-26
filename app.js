@@ -273,6 +273,67 @@ async function renderPurchases(records){
   root.querySelectorAll(".delete-purchase").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare definitivamente questo documento di acquisto?")){await deleteRecord(Number(b.dataset.id));render()}});
 }
 
+
+let editingProductId=null;
+let inventorySearch="";
+let movementFilter="all";
+function inventoryQty(value){return new Intl.NumberFormat("it-IT",{maximumFractionDigits:3}).format(Number(value)||0)}
+function inventoryBalance(product,movements){return (Number(product.openingStock)||0)+movements.filter(m=>m.productId===product.id).reduce((n,m)=>n+(m.direction==="in"?1:-1)*(Number(m.quantity)||0),0)}
+async function renderInventory(records){
+ const root=document.getElementById("view");
+ const products=records.filter(r=>r.type==="inventory_product");
+ const movements=records.filter(r=>r.type==="inventory_move");
+ const editing=editingProductId===null?null:products.find(p=>p.id===editingProductId);
+ const val=k=>editing?(editing[k]??""):"";
+ const term=inventorySearch.trim().toLocaleLowerCase();
+ const filtered=products.filter(p=>[p.name,p.sku,p.category,p.unit].join(" ").toLocaleLowerCase().includes(term));
+ const totalUnits=products.reduce((n,p)=>n+inventoryBalance(p,movements),0);
+ const lowStock=products.filter(p=>inventoryBalance(p,movements)<=Number(p.minStock||0));
+ const productOptions='<option value="">— Seleziona prodotto —</option>'+products.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(p=>'<option value="'+p.id+'">'+escapeHtml(p.name)+(p.sku?" · "+escapeHtml(p.sku):"")+'</option>').join("");
+ root.innerHTML='<div class="grid"><div class="metric"><small>Prodotti</small><strong>'+products.length+'</strong></div><div class="metric"><small>Giacenza complessiva</small><strong>'+inventoryQty(totalUnits)+'</strong></div><div class="metric"><small>Sotto scorta minima</small><strong>'+lowStock.length+'</strong></div></div>'+
+ '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifica prodotto":"Nuovo prodotto")+'</h2><p class="muted">Crea l’anagrafica e indica la giacenza iniziale e la soglia minima.</p></div></div><form id="product-form"><div class="form-grid">'+
+ '<div class="form-wide"><label class="form-label" for="product-name">Nome prodotto *</label><input class="field" id="product-name" required maxlength="180" value="'+escapeHtml(val("name"))+'" placeholder="Nome articolo o prodotto"></div>'+
+ '<div><label class="form-label" for="product-sku">Codice / SKU</label><input class="field" id="product-sku" maxlength="80" value="'+escapeHtml(val("sku"))+'" placeholder="Codice interno"></div>'+
+ '<div><label class="form-label" for="product-category">Categoria</label><input class="field" id="product-category" maxlength="100" value="'+escapeHtml(val("category"))+'" placeholder="Categoria"></div>'+
+ '<div><label class="form-label" for="product-unit">Unità di misura</label><input class="field" id="product-unit" maxlength="30" value="'+escapeHtml(val("unit")||"pz")+'" placeholder="pz, kg, m…"></div>'+
+ '<div><label class="form-label" for="product-opening">Giacenza iniziale</label><input class="field" id="product-opening" type="number" min="0" step="0.001" value="'+escapeHtml(val("openingStock")??0)+'"></div>'+
+ '<div><label class="form-label" for="product-min">Scorta minima</label><input class="field" id="product-min" type="number" min="0" step="0.001" value="'+escapeHtml(val("minStock")??0)+'"></div>'+
+ '</div><div class="toolbar"><button class="action" type="submit">'+(editing?"Salva prodotto":"Crea prodotto")+'</button>'+(editing?'<button class="action secondary" type="button" id="product-cancel">Annulla</button>':"")+'</div></form></div>'+
+ '<div class="panel"><div class="panel-heading"><div><h2>Prodotti e giacenze</h2><p class="muted">'+filtered.length+' prodotti visualizzati</p></div></div><input class="field" id="inventory-search" type="search" value="'+escapeHtml(inventorySearch)+'" placeholder="Cerca nome, codice o categoria">'+
+ (filtered.length?filtered.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(p=>{const balance=inventoryBalance(p,movements);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+escapeHtml(p.name)+'</strong><div class="muted">'+(p.sku?"Codice: "+escapeHtml(p.sku)+" · ":"")+(p.category?escapeHtml(p.category)+" · ":"")+escapeHtml(p.unit||"pz")+'</div><div class="contact-details"><span>Giacenza: <strong>'+inventoryQty(balance)+'</strong> '+escapeHtml(p.unit||"pz")+'</span><span>Scorta minima: '+inventoryQty(p.minStock)+' '+escapeHtml(p.unit||"pz")+'</span>'+(balance<=Number(p.minStock||0)?'<span><strong>Scorta da reintegrare</strong></span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-product" data-id="'+p.id+'">Modifica</button><button class="action danger delete-product" data-id="'+p.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">Nessun prodotto presente.</div>')+'</div>'+
+ '<div class="panel"><div class="panel-heading"><div><h2>Registra movimento</h2><p class="muted">Carichi e scarichi aggiornano automaticamente le giacenze.</p></div></div><form id="movement-form"><div class="form-grid">'+
+ '<div class="form-wide"><label class="form-label" for="movement-product">Prodotto *</label><select class="field" id="movement-product" required>'+productOptions+'</select></div>'+
+ '<div><label class="form-label" for="movement-direction">Tipo movimento</label><select class="field" id="movement-direction"><option value="in">Carico</option><option value="out">Scarico</option></select></div>'+
+ '<div><label class="form-label" for="movement-quantity">Quantità *</label><input class="field" id="movement-quantity" type="number" min="0.001" step="0.001" required></div>'+
+ '<div><label class="form-label" for="movement-date">Data</label><input class="field" id="movement-date" type="date" value="'+new Date().toISOString().slice(0,10)+'"></div>'+
+ '<div><label class="form-label" for="movement-reference">Riferimento</label><input class="field" id="movement-reference" maxlength="100" placeholder="Documento / ordine"></div>'+
+ '<div class="form-wide"><label class="form-label" for="movement-notes">Causale / note</label><input class="field" id="movement-notes" maxlength="500" placeholder="Motivo del movimento"></div>'+
+ '</div><div class="toolbar"><button class="action" type="submit" '+(products.length?"":"disabled")+'>Registra movimento</button></div></form></div>'+
+ '<div class="panel"><div class="panel-heading"><div><h2>Ultimi movimenti</h2><p class="muted">'+movements.length+' movimenti registrati</p></div></div><label class="form-label" for="movement-filter">Filtra elenco</label><select class="field" id="movement-filter"><option value="all">Tutti i movimenti</option><option value="in" '+(movementFilter==="in"?"selected":"")+'>Solo carichi</option><option value="out" '+(movementFilter==="out"?"selected":"")+'>Solo scarichi</option></select>'+
+ (movements.filter(m=>movementFilter==="all"||m.direction===movementFilter).length?movements.filter(m=>movementFilter==="all"||m.direction===movementFilter).slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")||(b.id-a.id)).map(m=>{const p=products.find(x=>x.id===m.productId);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+(m.direction==="in"?"Carico":"Scarico")+' · '+escapeHtml(p?.name||"Prodotto eliminato")+'</strong><div class="muted">'+escapeHtml(m.date||"")+(m.reference?" · Rif. "+escapeHtml(m.reference):"")+'</div><div class="contact-details"><span>Quantità: '+inventoryQty(m.quantity)+' '+escapeHtml(p?.unit||"")+'</span>'+(m.notes?'<span>'+escapeHtml(m.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action danger delete-movement" data-id="'+m.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">Nessun movimento registrato.</div>')+'</div>';
+ document.getElementById("product-form").onsubmit=async e=>{
+  e.preventDefault();const name=document.getElementById("product-name").value.trim(),opening=Number(document.getElementById("product-opening").value)||0,min=Number(document.getElementById("product-min").value)||0;
+  if(!name||opening<0||min<0){alert("Controlla nome e quantità.");return}
+  const product={type:"inventory_product",name,sku:document.getElementById("product-sku").value.trim(),category:document.getElementById("product-category").value.trim(),unit:document.getElementById("product-unit").value.trim()||"pz",openingStock:opening,minStock:min};
+  if(editing){product.id=editing.id;product.createdAt=editing.createdAt;product.updatedAt=new Date().toISOString();await updateRecord(product)}else await addRecord(product);
+  editingProductId=null;inventorySearch="";await render();
+ };
+ const pc=document.getElementById("product-cancel");if(pc)pc.onclick=()=>{editingProductId=null;render()};
+ document.getElementById("inventory-search").oninput=e=>{inventorySearch=e.target.value;const pos=e.target.selectionStart;render().then(()=>{const el=document.getElementById("inventory-search");el.focus();el.setSelectionRange(pos,pos)})};
+ root.querySelectorAll(".edit-product").forEach(b=>b.onclick=()=>{editingProductId=Number(b.dataset.id);render()});
+ root.querySelectorAll(".delete-product").forEach(b=>b.onclick=async()=>{const id=Number(b.dataset.id);if(movements.some(m=>m.productId===id)){alert("Non puoi eliminare un prodotto con movimenti registrati. Conserva la tracciabilità.");return}if(confirm("Eliminare questo prodotto?")){await deleteRecord(id);render()}});
+ document.getElementById("movement-filter").onchange=e=>{movementFilter=e.target.value;render()};
+ document.getElementById("movement-form").onsubmit=async e=>{
+  e.preventDefault();const productId=Number(document.getElementById("movement-product").value),product=products.find(p=>p.id===productId),quantity=Number(document.getElementById("movement-quantity").value),direction=document.getElementById("movement-direction").value;
+  if(!product||!Number.isFinite(quantity)||quantity<=0){alert("Seleziona un prodotto e inserisci una quantità positiva.");return}
+  const balance=inventoryBalance(product,movements);
+  if(direction==="out"&&quantity>balance){alert("Giacenza insufficiente: disponibili "+inventoryQty(balance)+" "+(product.unit||"pz")+".");return}
+  await addRecord({type:"inventory_move",productId,direction,quantity,date:document.getElementById("movement-date").value,reference:document.getElementById("movement-reference").value.trim(),notes:document.getElementById("movement-notes").value.trim()});
+  await render();
+ };
+ root.querySelectorAll(".delete-movement").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare il movimento? La giacenza verrà ricalcolata.")){await deleteRecord(Number(b.dataset.id));await render()}});
+}
+
 async function render(){
   const root=document.getElementById("view");
   const records=await allRecords();
@@ -290,6 +351,7 @@ async function render(){
   if(currentView==="crm"){await renderCRM(records);return}
   if(currentView==="sales"){await renderSales(records);return}
   if(currentView==="purchases"){await renderPurchases(records);return}
+  if(currentView==="inventory"){await renderInventory(records);return}
   const moduleRecords=records.filter(r=>r.type===currentView);
   const descriptions={crm:"Gestione delle opportunità e del rapporto con i potenziali clienti.",sales:"Preventivi, ordini cliente e flusso delle vendite.",purchases:"Richieste, ordini fornitore e acquisti.",inventory:"Prodotti, giacenze e movimenti di magazzino.",invoices:"Fatture clienti e fornitori, con stato dei pagamenti.",activities:"Promemoria, appuntamenti e attività da completare.",documents:"Archivio dei documenti collegati alle attività aziendali."};
   root.innerHTML='<div class="panel"><h2>'+labels[currentView]+'</h2><p class="muted">'+(descriptions[currentView]||"Sezione del gestionale.")+'</p><form id="new-record"><label class="muted" for="record-name">Nome o descrizione</label><input class="field" id="record-name" maxlength="120" required placeholder="Inserisci un nome o una descrizione"><label class="muted" for="record-notes">Note (facoltative)</label><input class="field" id="record-notes" maxlength="500" placeholder="Aggiungi dettagli"><button class="action" type="submit">Crea</button></form></div><div class="panel"><h2>Elementi</h2>'+(moduleRecords.length?moduleRecords.map(r=>'<div class="record"><strong>'+escapeHtml(r.name)+'</strong>'+(r.notes?'<div class="muted">'+escapeHtml(r.notes)+'</div>':"")+'</div>').join(""):'<div class="empty">Nessun elemento presente. Le funzioni specifiche di questo modulo verranno sviluppate nelle prossime fasi.</div>')+'</div>';
