@@ -216,8 +216,8 @@ async function renderSales(records){
     if(records.some(m=>m.type==="inventory_move"&&m.sourceSaleId===sale.id)){alert("Il magazzino risulta già aggiornato per questo documento.");return}
     const products=records.filter(x=>x.type==="inventory_product"),moves=records.filter(x=>x.type==="inventory_move"),lines=Array.isArray(sale.lines)?sale.lines:[];
     if(!lines.length){alert("Il documento non contiene righe prodotto.");return}
-    const matched=lines.map(line=>({line,product:products.find(p=>(p.sku&&p.sku.trim().toLowerCase()===String(line.description||"").trim().toLowerCase())||(p.name||"").trim().toLowerCase()===String(line.description||"").trim().toLowerCase())}));
-    if(matched.some(x=>!x.product)){alert("Non tutte le righe corrispondono esattamente a un prodotto del magazzino. Usa come descrizione il nome o il codice SKU del prodotto.");return}
+    const matched=lines.map(line=>({line,product:line.productId?products.find(p=>p.id===Number(line.productId)):products.find(p=>(p.sku&&p.sku.trim().toLowerCase()===String(line.description||"").trim().toLowerCase())||(p.name||"").trim().toLowerCase()===String(line.description||"").trim().toLowerCase())}));
+    if(matched.some(x=>!x.product)){alert("Una o più righe non sono collegate a un prodotto valido del magazzino. Riapri il documento e seleziona il prodotto dall’anagrafica.");return}
     const quantities=new Map();matched.forEach(x=>quantities.set(x.product.id,(quantities.get(x.product.id)||0)+(Number(x.line.quantity)||0)));
     for(const [id,qty] of quantities){const p=products.find(x=>x.id===id),balance=inventoryBalance(p,moves);if(qty<=0||qty>balance){alert("Giacenza insufficiente per "+p.name+": disponibili "+inventoryQty(balance)+" "+(p.unit||"pz")+". Nessun movimento è stato registrato.");return}}
     if(!confirm("Registrare la consegna e scaricare le quantità dal magazzino? Questa operazione non sarà ripetibile per lo stesso ordine."))return;
@@ -302,8 +302,8 @@ async function renderPurchases(records){
     if(records.some(m=>m.type==="inventory_move"&&m.sourcePurchaseId===purchase.id)){alert("Il carico per questo acquisto risulta già registrato.");return}
     const products=records.filter(x=>x.type==="inventory_product"),moves=records.filter(x=>x.type==="inventory_move"),lines=Array.isArray(purchase.lines)?purchase.lines:[];
     if(!lines.length){alert("L'ordine non contiene righe prodotto.");return}
-    const matched=lines.map(line=>({line,product:products.find(p=>(p.sku&&p.sku.trim().toLowerCase()===String(line.description||"").trim().toLowerCase())||(p.name||"").trim().toLowerCase()===String(line.description||"").trim().toLowerCase())}));
-    if(matched.some(x=>!x.product)){alert("Non tutte le righe corrispondono a un prodotto del magazzino. Usa come descrizione il nome o il codice SKU esatto.");return}
+    const matched=lines.map(line=>({line,product:line.productId?products.find(p=>p.id===Number(line.productId)):products.find(p=>(p.sku&&p.sku.trim().toLowerCase()===String(line.description||"").trim().toLowerCase())||(p.name||"").trim().toLowerCase()===String(line.description||"").trim().toLowerCase())}));
+    if(matched.some(x=>!x.product)){alert("Una o più righe non sono collegate a un prodotto valido del magazzino. Riapri il documento e seleziona il prodotto dall’anagrafica.");return}
     const quantities=new Map();matched.forEach(x=>quantities.set(x.product.id,(quantities.get(x.product.id)||0)+(Number(x.line.quantity)||0)));
     if([...quantities.values()].some(q=>!Number.isFinite(q)||q<=0)){alert("Una o più quantità non sono valide. Nessun carico registrato.");return}
     if(!confirm("Registrare la ricezione e caricare le quantità in magazzino? Questa operazione non sarà ripetibile per lo stesso acquisto."))return;
