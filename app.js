@@ -627,6 +627,29 @@ async function renderCashBook(records){
  root.querySelectorAll(".cash-delete").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare questa registrazione?")){await deleteRecord(Number(b.dataset.id));render()}});
 }
 
+
+function installSearchLens(){
+  const ids=["contact-search","crm-search","sales-search","purchase-search","inventory-search","iv-search","act-search","doc-search","cash-search"];
+  for(const id of ids){
+    const input=document.getElementById(id);
+    if(!input||input.dataset.lensReady==="1")continue;
+    input.dataset.lensReady="1";
+    const button=document.createElement("button");
+    button.type="button";button.className="action secondary search-lens";
+    button.textContent="⌕";button.setAttribute("aria-label","Mostra o nascondi la ricerca");
+    button.title="Cerca";
+    input.parentNode.insertBefore(button,input);
+    input.hidden=true;
+    button.onclick=()=>{
+      input.hidden=!input.hidden;
+      button.classList.toggle("active",!input.hidden);
+      if(!input.hidden)input.focus();
+      else if(input.value){input.value="";input.dispatchEvent(new Event("input",{bubbles:true}))}
+    };
+    if(input.value){input.hidden=false;button.classList.add("active")}
+  }
+}
+
 async function render(){
   const root=document.getElementById("view");
   const records=await allRecords();
@@ -642,7 +665,7 @@ async function render(){
     root.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>setView(b.dataset.go));
     return;
   }
-  if(currentView==="cashbook"){await renderCashBook(records);return}
+  if(currentView==="cashbook"){await renderCashBook(records);installSearchLens();return}
   if(currentView==="reports"){
     const sales=records.filter(r=>r.type==="sales"),purchases=records.filter(r=>r.type==="purchases"),invoices=records.filter(r=>r.type==="invoices"),crm=records.filter(r=>r.type==="crm"),products=records.filter(r=>r.type==="inventory_product"),moves=records.filter(r=>r.type==="inventory_move");
     const balance=invoices.reduce((n,x)=>n+Math.max(0,(Number(x.total)||0)-(Number(x.paid)||0)),0);
@@ -660,14 +683,14 @@ async function render(){
     document.getElementById("import-file").onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const data=JSON.parse(await file.text());if(data.app!=="MyERP"||!Array.isArray(data.records))throw Error("File non valido");for(const r of data.records){const {id,...record}=r;await addRecord(record)}alert("Backup importato.");render()}catch(err){alert("Impossibile importare: "+err.message)}};
     return;
   }
-  if(currentView==="contacts"){await renderContacts(records);return}
-  if(currentView==="crm"){await renderCRM(records);return}
-  if(currentView==="sales"){await renderSales(records);return}
-  if(currentView==="purchases"){await renderPurchases(records);return}
-  if(currentView==="inventory"){await renderInventory(records);return}
-  if(currentView==="invoices"){await renderInvoices(records);return}
-  if(currentView==="activities"){await renderActivities(records);return}
-  if(currentView==="documents"){await renderDocuments(records);return}
+  if(currentView==="contacts"){await renderContacts(records);installSearchLens();return}
+  if(currentView==="crm"){await renderCRM(records);installSearchLens();return}
+  if(currentView==="sales"){await renderSales(records);installSearchLens();return}
+  if(currentView==="purchases"){await renderPurchases(records);installSearchLens();return}
+  if(currentView==="inventory"){await renderInventory(records);installSearchLens();return}
+  if(currentView==="invoices"){await renderInvoices(records);installSearchLens();return}
+  if(currentView==="activities"){await renderActivities(records);installSearchLens();return}
+  if(currentView==="documents"){await renderDocuments(records);installSearchLens();return}
   const moduleRecords=records.filter(r=>r.type===currentView);
   const descriptions={crm:"Gestione delle opportunità e del rapporto con i potenziali clienti.",sales:"Preventivi, ordini cliente e flusso delle vendite.",purchases:"Richieste, ordini fornitore e acquisti.",inventory:"Prodotti, giacenze e movimenti di magazzino.",invoices:"Fatture clienti e fornitori, con stato dei pagamenti.",activities:"Promemoria, appuntamenti e attività da completare.",documents:"Archivio dei documenti collegati alle attività aziendali."};
   root.innerHTML='<div class="panel"><h2>'+labels[currentView]+'</h2><p class="muted">'+(descriptions[currentView]||"Sezione del gestionale.")+'</p><form id="new-record"><label class="muted" for="record-name">Nome o descrizione</label><input class="field" id="record-name" maxlength="120" required placeholder="Inserisci un nome o una descrizione"><label class="muted" for="record-notes">Note (facoltative)</label><input class="field" id="record-notes" maxlength="500" placeholder="Aggiungi dettagli"><button class="action" type="submit">Crea</button></form></div><div class="panel"><h2>Elementi</h2>'+(moduleRecords.length?moduleRecords.map(r=>'<div class="record"><strong>'+escapeHtml(r.name)+'</strong>'+(r.notes?'<div class="muted">'+escapeHtml(r.notes)+'</div>':"")+'</div>').join(""):'<div class="empty">Nessun elemento presente. Le funzioni specifiche di questo modulo verranno sviluppate nelle prossime fasi.</div>')+'</div>';
