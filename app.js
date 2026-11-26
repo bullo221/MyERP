@@ -382,7 +382,25 @@ async function renderInventory(records){
   await addRecord({type:"inventory_move",productId,direction,quantity,date:document.getElementById("movement-date").value,reference:document.getElementById("movement-reference").value.trim(),notes:document.getElementById("movement-notes").value.trim()});
   await render();
  };
- root.querySelectorAll(".delete-movement").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare il movimento? La giacenza verrà ricalcolata.")){await deleteRecord(Number(b.dataset.id));await render()}});
+ root.querySelectorAll(".delete-movement").forEach(b=>b.onclick=async()=>{
+  const movement=movements.find(m=>m.id===Number(b.dataset.id));if(!movement)return;
+  const linkedSale=movement.sourceSaleId?records.find(x=>x.type==="sales"&&x.id===movement.sourceSaleId):null;
+  const linkedPurchase=movement.sourcePurchaseId?records.find(x=>x.type==="purchases"&&x.id===movement.sourcePurchaseId):null;
+  const linked=linkedSale||linkedPurchase;
+  const detail=linked?" Il movimento è collegato a "+(linkedSale?"una vendita":"un acquisto")+" e la quantità registrata verrà ripristinata nel documento.":"";
+  if(!confirm("Eliminare questo movimento? La giacenza verrà ricalcolata."+detail))return;
+  if(linked&&Number.isInteger(movement.sourceSaleLineIndex)&&linkedSale&&linkedSale.lines[movement.sourceSaleLineIndex]){
+    const line=linkedSale.lines[movement.sourceSaleLineIndex];line.deliveredQuantity=Math.max(0,(Number(line.deliveredQuantity)||0)-(Number(movement.quantity)||0));
+    linkedSale.status=linkedSale.lines.every(x=>(Number(x.deliveredQuantity)||0)>=Number(x.quantity||0))?"delivered":(linkedSale.lines.some(x=>(Number(x.deliveredQuantity)||0)>0)?"confirmed":(linkedSale.status==="delivered"?"confirmed":linkedSale.status));
+    linkedSale.updatedAt=new Date().toISOString();await updateRecord(linkedSale);
+  }
+  if(linked&&Number.isInteger(movement.sourcePurchaseLineIndex)&&linkedPurchase&&linkedPurchase.lines[movement.sourcePurchaseLineIndex]){
+    const line=linkedPurchase.lines[movement.sourcePurchaseLineIndex];line.receivedQuantity=Math.max(0,(Number(line.receivedQuantity)||0)-(Number(movement.quantity)||0));
+    linkedPurchase.status=linkedPurchase.lines.every(x=>(Number(x.receivedQuantity)||0)>=Number(x.quantity||0))?"received":"ordered";
+    linkedPurchase.updatedAt=new Date().toISOString();await updateRecord(linkedPurchase);
+  }
+  await deleteRecord(Number(b.dataset.id));await render();
+});
 }
 
 
