@@ -358,7 +358,7 @@ async function renderInventory(records){
  '<div class="form-wide"><label class="form-label" for="movement-notes">Causale / note</label><input class="field" id="movement-notes" maxlength="500" placeholder="Motivo del movimento"></div>'+
  '</div><div class="toolbar"><button class="action" type="submit" '+(products.length?"":"disabled")+'>Registra movimento</button></div></form></div>'+
  '<div class="panel"><div class="panel-heading"><div><h2>Ultimi movimenti</h2><p class="muted">'+movements.length+' movimenti registrati</p></div></div><label class="form-label" for="movement-filter">Filtra elenco</label><select class="field" id="movement-filter"><option value="all">Tutti i movimenti</option><option value="in" '+(movementFilter==="in"?"selected":"")+'>Solo carichi</option><option value="out" '+(movementFilter==="out"?"selected":"")+'>Solo scarichi</option></select>'+
- (movements.filter(m=>movementFilter==="all"||m.direction===movementFilter).length?movements.filter(m=>movementFilter==="all"||m.direction===movementFilter).slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")||(b.id-a.id)).map(m=>{const p=products.find(x=>x.id===m.productId);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+(m.direction==="in"?"Carico":"Scarico")+' · '+escapeHtml(p?.name||"Prodotto eliminato")+'</strong><div class="muted">'+escapeHtml(m.date||"")+(m.reference?" · Rif. "+escapeHtml(m.reference):"")+'</div><div class="contact-details"><span>Quantità: '+inventoryQty(m.quantity)+' '+escapeHtml(p?.unit||"")+'</span>'+(m.notes?'<span>'+escapeHtml(m.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action danger delete-movement" data-id="'+m.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">Nessun movimento registrato.</div>')+'</div>';
+ (movements.filter(m=>movementFilter==="all"||m.direction===movementFilter).length?movements.filter(m=>movementFilter==="all"||m.direction===movementFilter).slice().sort((a,b)=>(b.date||"").localeCompare(a.date||"")||(b.id-a.id)).map(m=>{const p=products.find(x=>x.id===m.productId);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+(m.direction==="in"?"Carico":"Scarico")+' · '+escapeHtml(p?.name||"Prodotto eliminato")+'</strong><div class="muted">'+escapeHtml(m.date||"")+(m.reference?" · Rif. "+escapeHtml(m.reference):"")+'</div><div class="contact-details"><span>Quantità: '+inventoryQty(m.quantity)+' '+escapeHtml(p?.unit||"")+'</span>'+(m.notes?'<span>'+escapeHtml(m.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-movement" data-id="'+m.id+'">Modifica quantità</button><button class="action danger delete-movement" data-id="'+m.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">Nessun movimento registrato.</div>')+'</div>';
  document.getElementById("product-form").onsubmit=async e=>{
   e.preventDefault();const name=document.getElementById("product-name").value.trim(),opening=Number(document.getElementById("product-opening").value)||0,min=Number(document.getElementById("product-min").value)||0;
   if(!name||opening<0||min<0){alert("Controlla nome e quantità.");return}
@@ -382,6 +382,34 @@ async function renderInventory(records){
   await addRecord({type:"inventory_move",productId,direction,quantity,date:document.getElementById("movement-date").value,reference:document.getElementById("movement-reference").value.trim(),notes:document.getElementById("movement-notes").value.trim()});
   await render();
  };
+ root.querySelectorAll(".edit-movement").forEach(b=>b.onclick=async()=>{
+  const movement=movements.find(m=>m.id===Number(b.dataset.id));if(!movement)return;
+  const entered=prompt("Nuova quantità del movimento:",String(movement.quantity));if(entered===null)return;
+  const quantity=Number(entered);if(!Number.isFinite(quantity)||quantity<=0){alert("Inserisci una quantità positiva.");return}
+  const product=products.find(p=>p.id===movement.productId);if(!product){alert("Prodotto non trovato: impossibile modificare il movimento.");return}
+  const linkedSale=movement.sourceSaleId?records.find(x=>x.type==="sales"&&x.id===movement.sourceSaleId):null;
+  const linkedPurchase=movement.sourcePurchaseId?records.find(x=>x.type==="purchases"&&x.id===movement.sourcePurchaseId):null;
+  const saleLine=linkedSale&&Number.isInteger(movement.sourceSaleLineIndex)?linkedSale.lines[movement.sourceSaleLineIndex]:null;
+  const purchaseLine=linkedPurchase&&Number.isInteger(movement.sourcePurchaseLineIndex)?linkedPurchase.lines[movement.sourcePurchaseLineIndex]:null;
+  if(saleLine&&quantity>(Number(saleLine.quantity)||0)-(Number(saleLine.deliveredQuantity)||0)+(Number(movement.quantity)||0)){alert("La quantità supera quella ancora consegnabile nell'ordine.");return}
+  if(purchaseLine&&quantity>(Number(purchaseLine.quantity)||0)-(Number(purchaseLine.receivedQuantity)||0)+(Number(movement.quantity)||0)){alert("La quantità supera quella ancora ricevibile nell'ordine.");return}
+  if(movement.direction==="out"){
+    const balanceWithout=inventoryBalance(product,movements.filter(m=>m.id!==movement.id));
+    if(quantity>balanceWithout){alert("Giacenza insufficiente per questa quantità.");return}
+  }
+  const delta=quantity-(Number(movement.quantity)||0);
+  if(saleLine){
+    saleLine.deliveredQuantity=Math.max(0,(Number(saleLine.deliveredQuantity)||0)+delta);
+    linkedSale.status=linkedSale.lines.every(x=>(Number(x.deliveredQuantity)||0)>=(Number(x.quantity)||0))?"delivered":"confirmed";
+    linkedSale.updatedAt=new Date().toISOString();await updateRecord(linkedSale);
+  }
+  if(purchaseLine){
+    purchaseLine.receivedQuantity=Math.max(0,(Number(purchaseLine.receivedQuantity)||0)+delta);
+    linkedPurchase.status=linkedPurchase.lines.every(x=>(Number(x.receivedQuantity)||0)>=(Number(x.quantity)||0))?"received":"ordered";
+    linkedPurchase.updatedAt=new Date().toISOString();await updateRecord(linkedPurchase);
+  }
+  movement.quantity=quantity;movement.updatedAt=new Date().toISOString();await updateRecord(movement);await render();
+ });
  root.querySelectorAll(".delete-movement").forEach(b=>b.onclick=async()=>{
   const movement=movements.find(m=>m.id===Number(b.dataset.id));if(!movement)return;
   const linkedSale=movement.sourceSaleId?records.find(x=>x.type==="sales"&&x.id===movement.sourceSaleId):null;
