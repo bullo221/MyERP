@@ -132,7 +132,7 @@ function contactHistoryHtml(records, contact){
   const purchases=records.filter(r=>r.type==="purchases"&&r.supplierId===contact.id);
   for(const r of sales)add(r,"Vendita / preventivo",r.date,r.number||r.name);
   for(const r of purchases)add(r,"Acquisto",r.date,r.number||r.name);
-  for(const r of records.filter(r=>r.type==="crm"&&r.contactId===contact.id))add(r,"Opportunità CRM",r.expectedClose,r.name);
+  for(const r of records.filter(r=>r.type==="crm"&&r.contactId===contact.id)){add(r,"Opportunità CRM",r.expectedClose,r.name);for(const d of records.filter(x=>x.type==="documents"&&x.opportunityId===r.id))add(d,"Offerta mandante (PDF)",d.date,d.fileName||d.name)}
   for(const r of records.filter(r=>r.type==="invoices"&&r.contactId===contact.id))add(r,r.kind==="supplier"?"Fattura fornitore":"Fattura cliente",r.date,(r.number||r.reference||"")+" · "+(r.name||"")+" · "+money(r.total));
   for(const r of records.filter(r=>r.type==="activities"&&r.contactId===contact.id))add(r,"Attività",r.dueDate,r.name);
   for(const r of records.filter(r=>r.type==="documents"&&r.contactId===contact.id))add(r,"Documento",r.date,r.name||r.fileName);
@@ -216,16 +216,20 @@ async function renderCRM(records){
   const root=document.getElementById("view");
   const opportunities=records.filter(r=>r.type==="crm");
   const contacts=records.filter(r=>r.type==="contacts");
+  const documents=records.filter(r=>r.type==="documents"&&r.opportunityId);
   const editing=editingOpportunityId===null?null:opportunities.find(r=>r.id===editingOpportunityId);
   const value=key=>editing?(editing[key]??""):"";
   const contactOptions='<option value="">— Nessun contatto collegato —</option>'+contacts.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<option value="'+c.id+'" '+(String(value("contactId"))===String(c.id)?"selected":"")+'>'+escapeHtml(c.name)+(c.company?" · "+escapeHtml(c.company):"")+'</option>').join("");
   const term=crmSearch.trim().toLocaleLowerCase();
-  const filtered=opportunities.filter(o=>(crmStageFilter==="all"||o.stage===crmStageFilter)&&[o.name,o.notes,contacts.find(c=>c.id===o.contactId)?.name].join(" ").toLocaleLowerCase().includes(term));
+  const filtered=opportunities.filter(o=>(crmStageFilter==="all"||o.stage===crmStageFilter)&&[o.name,o.notes,o.requestNotes,contacts.find(c=>c.id===o.contactId)?.name].join(" ").toLocaleLowerCase().includes(term));
   const total=opportunities.filter(o=>!["won","lost"].includes(o.stage)).reduce((s,o)=>s+(Number(o.expectedRevenue)||0),0);
   const weighted=opportunities.filter(o=>!["won","lost"].includes(o.stage)).reduce((s,o)=>s+(Number(o.expectedRevenue)||0)*(Number(o.probability)||0)/100,0);
+  const fileInput='<div class="form-wide"><label class="form-label" for="crm-offer-files">Offerta PDF del mandante (puoi selezionare più file, massimo 10 MB ciascuno)</label><input class="field" id="crm-offer-files" type="file" accept="application/pdf,.pdf" multiple><p class="muted">I PDF vengono archiviati localmente e collegati a questa opportunità. Puoi allegarli anche dopo aver creato la trattativa, modificandola.</p></div>';
+  const editingDocs=editing?documents.filter(d=>d.opportunityId===editing.id):[];
+  const docsHtml=editingDocs.length?'<div class="form-wide"><strong>Offerte già archiviate</strong><div class="contact-details">'+editingDocs.map(d=>'<span>'+escapeHtml(d.fileName||d.name)+' · '+escapeHtml(d.date||"")+' <a href="'+escapeHtml(d.dataUrl||"#")+'" target="_blank" rel="noopener">Apri PDF</a> <button type="button" class="action danger crm-doc-delete" data-id="'+d.id+'">Elimina</button></span>').join("")+'</div></div>':'';
   root.innerHTML=
     '<div class="grid"><div class="metric"><small>Opportunità aperte</small><strong>'+opportunities.filter(o=>!["won","lost"].includes(o.stage)).length+'</strong></div><div class="metric"><small>Valore previsto</small><strong>'+money(total)+'</strong></div><div class="metric"><small>Valore ponderato</small><strong>'+money(weighted)+'</strong></div></div>'+
-    '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifica opportunità":"Nuova opportunità")+'</h2><p class="muted">Registra una trattativa e segui la sua evoluzione commerciale.</p></div></div>'+
+    '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifica opportunità":"Nuova opportunità")+'</h2><p class="muted">Registra una trattativa e conserva qui richiesta del cliente e offerta del mandante.</p></div></div>'+
     '<form id="crm-form"><div class="form-grid">'+
     '<div class="form-wide"><label class="form-label" for="crm-name">Nome opportunità *</label><input class="field" id="crm-name" maxlength="180" required value="'+escapeHtml(value("name"))+'" placeholder="Es. Fornitura annuale cliente"></div>'+
     '<div><label class="form-label" for="crm-contact">Cliente / contatto</label><select class="field" id="crm-contact">'+contactOptions+'</select></div>'+
@@ -233,11 +237,13 @@ async function renderCRM(records){
     '<div><label class="form-label" for="crm-revenue">Valore previsto (€)</label><input class="field" id="crm-revenue" type="number" min="0" step="0.01" value="'+escapeHtml(value("expectedRevenue"))+'" placeholder="0"></div>'+
     '<div><label class="form-label" for="crm-probability">Probabilità di chiusura (%)</label><input class="field" id="crm-probability" type="number" min="0" max="100" step="1" value="'+escapeHtml(value("probability")||"0")+'"></div>'+
     '<div><label class="form-label" for="crm-close">Chiusura prevista</label><input class="field" id="crm-close" type="date" value="'+escapeHtml(value("expectedClose"))+'"></div>'+
+    '<div class="form-wide"><label class="form-label" for="crm-request-notes">Richiesta del cliente</label><textarea class="field" id="crm-request-notes" rows="5" maxlength="10000" placeholder="Incolla qui il testo dell’email o della richiesta ricevuta dal cliente">'+escapeHtml(value("requestNotes"))+'</textarea></div>'+
     '<div class="form-wide"><label class="form-label" for="crm-notes">Note e prossima attività</label><textarea class="field" id="crm-notes" rows="3" maxlength="1500" placeholder="Telefonata, invio preventivo, prossimo incontro…">'+escapeHtml(value("notes"))+'</textarea></div>'+
+    fileInput+docsHtml+
     '</div><div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Crea opportunità")+'</button>'+(editing?'<button class="action secondary" type="button" id="crm-cancel">Annulla</button>':"")+'</div></form></div>'+
     '<div class="panel"><div class="panel-heading"><div><h2>Pipeline commerciale</h2><p class="muted">'+filtered.length+' opportunità visualizzate</p></div></div>'+
     '<div class="form-grid"><div><label class="form-label" for="crm-search">Cerca</label><input class="field" id="crm-search" type="search" placeholder="Opportunità o cliente…" value="'+escapeHtml(crmSearch)+'"></div><div><label class="form-label" for="crm-filter">Filtra per fase</label><select class="field" id="crm-filter"><option value="all">Tutte le fasi</option>'+Object.entries(crmStages).map(([k,v])=>'<option value="'+k+'" '+(crmStageFilter===k?"selected":"")+'>'+v+'</option>').join("")+'</select></div></div>'+
-    (filtered.length?filtered.slice().sort((a,b)=>(a.expectedClose||"9999").localeCompare(b.expectedClose||"9999")).map(o=>{const c=contacts.find(x=>x.id===o.contactId);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+escapeHtml(o.name)+'</strong><div class="muted">'+escapeHtml(crmStages[o.stage]||"Nuova")+(c?" · "+escapeHtml(c.name):" · Nessun cliente collegato")+'</div><div class="contact-details"><span>Valore: '+money(o.expectedRevenue)+'</span><span>Probabilità: '+(Number(o.probability)||0)+'%</span>'+(o.expectedClose?'<span>Chiusura prevista: '+escapeHtml(o.expectedClose)+'</span>':"")+(o.notes?'<span>Note: '+escapeHtml(o.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-opportunity" data-id="'+o.id+'">Modifica</button><button class="action danger delete-opportunity" data-id="'+o.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">'+(term||crmStageFilter!=="all"?"Nessuna opportunità corrisponde ai filtri.":"La pipeline è vuota. Crea la prima opportunità dal modulo qui sopra.")+'</div>')+'</div>';
+    (filtered.length?filtered.slice().sort((a,b)=>(a.expectedClose||"9999").localeCompare(b.expectedClose||"9999")).map(o=>{const c=contacts.find(x=>x.id===o.contactId),files=documents.filter(d=>d.opportunityId===o.id);return '<article class="contact-card"><div class="contact-main"><div class="contact-info"><strong>'+escapeHtml(o.name)+'</strong><div class="muted">'+escapeHtml(crmStages[o.stage]||"Nuova")+(c?" · "+escapeHtml(c.name):" · Nessun cliente collegato")+'</div><div class="contact-details"><span>Valore: '+money(o.expectedRevenue)+'</span><span>Probabilità: '+(Number(o.probability)||0)+'%</span>'+(o.expectedClose?'<span>Chiusura prevista: '+escapeHtml(o.expectedClose)+'</span>':"")+(o.requestNotes?'<span>Richiesta cliente: '+escapeHtml(o.requestNotes.slice(0,180))+(o.requestNotes.length>180?"…":"")+'</span>':"")+(o.notes?'<span>Note: '+escapeHtml(o.notes)+'</span>':"")+(files.length?'<span>Offerte PDF: '+files.map(d=>'<a href="'+escapeHtml(d.dataUrl||"#")+'" target="_blank" rel="noopener">'+escapeHtml(d.fileName||d.name)+'</a>').join(" · ")+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-opportunity" data-id="'+o.id+'">Apri / Modifica</button><button class="action danger delete-opportunity" data-id="'+o.id+'">Elimina</button></div></article>'}).join(""):'<div class="empty">'+(term||crmStageFilter!=="all"?"Nessuna opportunità corrisponde ai filtri.":"La pipeline è vuota. Crea la prima opportunità dal modulo qui sopra.")+'</div>')+'</div>';
   document.getElementById("crm-form").onsubmit=async e=>{
     e.preventDefault();
     const name=document.getElementById("crm-name").value.trim();
@@ -245,8 +251,16 @@ async function renderCRM(records){
     const expectedRevenue=Number(document.getElementById("crm-revenue").value)||0;
     if(!name){alert("Inserisci il nome dell’opportunità.");return}
     if(probability<0||probability>100||expectedRevenue<0){alert("Controlla valore e probabilità.");return}
-    const opportunity={type:"crm",name,contactId:document.getElementById("crm-contact").value?Number(document.getElementById("crm-contact").value):null,stage:document.getElementById("crm-stage").value,expectedRevenue,probability,expectedClose:document.getElementById("crm-close").value,notes:document.getElementById("crm-notes").value.trim()};
-    if(editing){opportunity.id=editing.id;opportunity.createdAt=editing.createdAt;opportunity.updatedAt=new Date().toISOString();await updateRecord(opportunity)}else{await addRecord(opportunity)}
+    const opportunity={type:"crm",name,contactId:document.getElementById("crm-contact").value?Number(document.getElementById("crm-contact").value):null,stage:document.getElementById("crm-stage").value,expectedRevenue,probability,expectedClose:document.getElementById("crm-close").value,requestNotes:document.getElementById("crm-request-notes").value.trim(),notes:document.getElementById("crm-notes").value.trim()};
+    let opportunityId;
+    if(editing){opportunity.id=editing.id;opportunityId=editing.id;opportunity.createdAt=editing.createdAt;opportunity.updatedAt=new Date().toISOString();await updateRecord(opportunity)}else{opportunityId=await addRecord(opportunity)}
+    const files=Array.from(document.getElementById("crm-offer-files").files||[]);
+    for(const file of files){
+      if(file.type!=="application/pdf"&&!file.name.toLowerCase().endsWith(".pdf")){alert("Il file "+file.name+" non è un PDF ed è stato saltato.");continue}
+      if(file.size>10*1024*1024){alert("Il PDF "+file.name+" supera il limite di 10 MB ed è stato saltato.");continue}
+      const dataUrl=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error);reader.readAsDataURL(file)});
+      await addRecord({type:"documents",name:file.name,fileName:file.name,mimeType:file.type||"application/pdf",fileSize:file.size,dataUrl,category:"offer",date:new Date().toISOString().slice(0,10),contactId:opportunity.contactId,opportunityId,notes:"Offerta PDF del mandante"});
+    }
     editingOpportunityId=null;crmSearch="";crmStageFilter="all";await render();
   };
   const cancel=document.getElementById("crm-cancel");
@@ -255,9 +269,9 @@ async function renderCRM(records){
   search.addEventListener("input",e=>{crmSearch=e.target.value;const pos=e.target.selectionStart;render().then(()=>{const input=document.getElementById("crm-search");input.focus();input.setSelectionRange(pos,pos)})});
   document.getElementById("crm-filter").onchange=e=>{crmStageFilter=e.target.value;render()};
   root.querySelectorAll(".edit-opportunity").forEach(b=>b.onclick=()=>{editingOpportunityId=Number(b.dataset.id);render()});
-  root.querySelectorAll(".delete-opportunity").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare definitivamente questa opportunità?")){await deleteRecord(Number(b.dataset.id));await render()}});
+  root.querySelectorAll(".delete-opportunity").forEach(b=>b.onclick=async()=>{const id=Number(b.dataset.id);if(confirm("Eliminare definitivamente questa opportunità? I PDF collegati verranno eliminati anch’essi.")){for(const d of documents.filter(x=>x.opportunityId===id))await deleteRecord(d.id);await deleteRecord(id);await render()}});
+  root.querySelectorAll(".crm-doc-delete").forEach(b=>b.onclick=async()=>{if(confirm("Eliminare questo PDF dall’opportunità?")){await deleteRecord(Number(b.dataset.id));await render()}});
 }
-
 
 let salesSearch="";
 let salesStatusFilter="all";
