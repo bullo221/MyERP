@@ -1,7 +1,7 @@
 const DB_NAME = "myerp-local";
 const DB_VERSION = 1;
 const STORE = "records";
-const labels = {dashboard:"Panoramica",crm:"CRM",contacts:"Contatti",sales:"Vendite",purchases:"Acquisti",inventory:"Magazzino",invoices:"Fatturazione",activities:"Attività",documents:"Documenti",backup:"Backup e ripristino"};
+const labels = {dashboard:"Panoramica",crm:"CRM",contacts:"Contatti",sales:"Vendite",purchases:"Acquisti",inventory:"Magazzino",invoices:"Fatturazione",activities:"Attività",documents:"Documenti",reports:"Report",backup:"Backup e ripristino"};
 let db;
 let currentView = "dashboard";
 let contactSearch = "";
@@ -526,6 +526,17 @@ async function render(){
     '<div class="panel"><h2>Attività recenti</h2>'+(recent.length?recent.map(a=>'<div class="record"><strong>'+escapeHtml(a.name)+'</strong><div class="muted">'+escapeHtml(a.dueDate||"Senza data")+' · '+(a.status==="done"?"Completata":a.status==="doing"?"In corso":"Da fare")+'</div></div>').join(""):'<div class="empty">Non ci sono ancora attività registrate.</div>')+'</div>'+
     '<div class="panel"><h2>Accesso rapido</h2><div class="toolbar">'+[['contacts','Contatti'],['crm','CRM'],['sales','Vendite'],['purchases','Acquisti'],['inventory','Magazzino'],['invoices','Fatturazione'],['activities','Attività'],['documents','Documenti'],['backup','Backup']].map(x=>'<button class="action secondary" data-go="'+x[0]+'">'+x[1]+'</button>').join("")+'</div><p class="muted">I dati di MyERP sono conservati nell’archivio locale di Safari su questo dispositivo.</p></div>';
     root.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>setView(b.dataset.go));
+    return;
+  }
+  if(currentView==="reports"){
+    const sales=records.filter(r=>r.type==="sales"),purchases=records.filter(r=>r.type==="purchases"),invoices=records.filter(r=>r.type==="invoices"),crm=records.filter(r=>r.type==="crm"),products=records.filter(r=>r.type==="inventory_product"),moves=records.filter(r=>r.type==="inventory_move");
+    const balance=invoices.reduce((n,x)=>n+Math.max(0,(Number(x.total)||0)-(Number(x.paid)||0)),0);
+    const pipeline=crm.filter(x=>!["won","lost"].includes(x.stage)).reduce((n,x)=>n+(Number(x.expectedRevenue)||0)*(Number(x.probability)||0)/100,0);
+    const stockValue=products.reduce((n,p)=>{const qty=moves.filter(m=>m.productId===p.id).reduce((v,m)=>v+(m.direction==="in"?1:-1)*(Number(m.quantity)||0),Number(p.openingStock)||0);return n+Math.max(0,qty)*(Number(p.purchasePrice)||0)},0);
+    const months=Array.from({length:6},(_,i)=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-(5-i));const key=d.toISOString().slice(0,7);const sum=arr=>arr.filter(x=>(x.date||"").slice(0,7)===key).reduce((n,x)=>n+(Number(x.total)||0),0);return {key,label:d.toLocaleDateString("it-IT",{month:"short",year:"numeric"}),sales:sum(sales),purchases:sum(purchases)}});
+    root.innerHTML='<div class="grid"><div class="metric"><small>Vendite registrate</small><strong>'+invoiceFmt(sales.reduce((n,x)=>n+(Number(x.total)||0),0))+'</strong></div><div class="metric"><small>Acquisti registrati</small><strong>'+invoiceFmt(purchases.reduce((n,x)=>n+(Number(x.total)||0),0))+'</strong></div><div class="metric"><small>Crediti aperti fatture</small><strong>'+invoiceFmt(balance)+'</strong></div><div class="metric"><small>Valore ponderato CRM</small><strong>'+invoiceFmt(pipeline)+'</strong></div><div class="metric"><small>Valore stimato magazzino</small><strong>'+invoiceFmt(stockValue)+'</strong></div></div>'+
+    '<div class="panel"><h2>Andamento ultimi 6 mesi</h2><p class="muted">Confronto tra documenti di vendita e acquisto in base alla data del documento. Importi IVA inclusa.</p><div style="overflow-x:auto"><table class="data-table"><thead><tr><th>Mese</th><th>Vendite</th><th>Acquisti</th><th>Differenza</th></tr></thead><tbody>'+months.map(m=>'<tr><td>'+escapeHtml(m.label)+'</td><td>'+invoiceFmt(m.sales)+'</td><td>'+invoiceFmt(m.purchases)+'</td><td>'+invoiceFmt(m.sales-m.purchases)+'</td></tr>').join("")+'</tbody></table></div></div>'+
+    '<div class="panel"><h2>Indicatori generali</h2><div class="contact-details"><span>Preventivi e ordini: '+sales.length+'</span><span>Ordini di acquisto: '+purchases.length+'</span><span>Fatture: '+invoices.length+'</span><span>Opportunità CRM: '+crm.length+'</span><span>Prodotti in anagrafica: '+products.length+'</span></div><p class="muted">Questi report sono riepiloghi gestionali, non sostituiscono una contabilità fiscale o un bilancio ufficiale.</p></div>';
     return;
   }
   if(currentView==="backup"){
