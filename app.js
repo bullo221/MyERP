@@ -7,6 +7,7 @@ let cashBookSearch="",cashBookFilter="all",editingCashEntryId=null;
 let currentView = "dashboard";
 let contactSearch = "";
 let editingContactId = null;
+let viewingContactHistoryId = null;
 
 function openDatabase(){
   return new Promise((resolve,reject)=>{
@@ -124,6 +125,21 @@ async function readContactImport(file){
   throw new Error("Formato non supportato. Seleziona un file .xlsx o .csv.");
 }
 
+function contactHistoryHtml(records, contact){
+  const related=[];
+  const add=(r,label,date,detail)=>related.push({r,label,date:date||r.createdAt||"",detail:detail||r.number||r.name||r.description||""});
+  const sales=records.filter(r=>r.type==="sales"&&r.contactId===contact.id);
+  const purchases=records.filter(r=>r.type==="purchases"&&r.supplierId===contact.id);
+  for(const r of sales)add(r,"Vendita / preventivo",r.date,r.number||r.name);
+  for(const r of purchases)add(r,"Acquisto",r.date,r.number||r.name);
+  for(const r of records.filter(r=>r.type==="crm"&&r.contactId===contact.id))add(r,"Opportunità CRM",r.expectedClose,r.name);
+  for(const r of records.filter(r=>r.type==="invoices"&&r.contactId===contact.id))add(r,r.kind==="supplier"?"Fattura fornitore":"Fattura cliente",r.date,(r.number||r.reference||"")+" · "+(r.name||"")+" · "+money(r.total));
+  for(const r of records.filter(r=>r.type==="activities"&&r.contactId===contact.id))add(r,"Attività",r.dueDate,r.name);
+  for(const r of records.filter(r=>r.type==="documents"&&r.contactId===contact.id))add(r,"Documento",r.date,r.name||r.fileName);
+  for(const r of records.filter(r=>r.type==="inventory_move"&&(sales.some(x=>x.id===r.sourceSaleId)||purchases.some(x=>x.id===r.sourcePurchaseId))))add(r,"Movimento di magazzino",r.date,(r.direction==="in"?"Carico":"Scarico")+" · "+(r.quantity||"")+" unità");
+  related.sort((a,b)=>String(b.date).localeCompare(String(a.date))||Number(b.r.id)-Number(a.r.id));
+  return '<div class="panel"><div class="panel-heading"><div><h2>Cronologia · '+escapeHtml(contact.name)+'</h2><p class="muted">'+related.length+' eventi collegati</p></div><button class="action secondary close-contact-history" type="button">Chiudi</button></div>'+(related.length?related.map(x=>'<div class="record"><strong>'+escapeHtml(x.label)+'</strong><div class="muted">'+escapeHtml(x.date||"Data non indicata")+' · '+escapeHtml(x.detail)+'</div></div>').join(""):'<div class="empty">Non ci sono ancora eventi collegati a questo contatto.</div>')+'</div>';
+}
 async function renderContacts(records){
   const root=document.getElementById("view");
   const contacts=records.filter(r=>r.type==="contacts");
@@ -131,6 +147,8 @@ async function renderContacts(records){
   const filtered=contacts.filter(c=>[c.name,c.company,c.email,c.phone,c.mobile,c.city,c.vat,c.notes].join(" ").toLocaleLowerCase().includes(term));
   const editing=editingContactId===null?null:contacts.find(c=>c.id===editingContactId);
   const value=(key)=>editing?editing[key]||"":"";
+  const historyContact=contacts.find(c=>c.id===viewingContactHistoryId);
+  const historyPanel=historyContact?contactHistoryHtml(records,historyContact):"";
   root.innerHTML=
     '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifier le contact":"Nouvelle fiche contact")+'</h2><p class="muted">Créez une fiche pour une personne ou une entreprise.</p></div></div>'+
     '<form id="contact-form"><div class="form-grid">'+
@@ -148,8 +166,8 @@ async function renderContacts(records){
     '<div>'+field("Paese","contact-country",value("country"),"Paese")+'</div>'+
     '<div class="form-wide"><label class="form-label" for="contact-notes">Note</label><textarea class="field" id="contact-notes" rows="3" maxlength="1000" placeholder="Annotazioni sul contatto">'+escapeHtml(value("notes"))+'</textarea></div>'+
     '</div><div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Crea contatto")+'</button>'+(editing?'<button class="action secondary" type="button" id="cancel-edit">Annulla</button>':"")+'</div></form></div>'+
-    '<div class="panel"><div class="panel-heading"><div><h2>Rubrica</h2><p class="muted">'+filtered.length+' contatti · '+contacts.filter(c=>c.kind==="person").length+' persone · '+contacts.filter(c=>c.kind==="company").length+' aziende</p></div></div><div class="toolbar"><label class="action secondary" for="contact-import-file">Importa Excel / CSV</label><input id="contact-import-file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div><p class="muted">File .xlsx o .csv con intestazioni nella prima riga. I duplicati vengono saltati.</p><div id="contact-import-preview"></div><input class="field" id="contact-search" type="search" placeholder="Cerca per nome, azienda, email, telefono, ID fiscale o città…" value="'+escapeHtml(contactSearch)+'">'+
-    (filtered.length?filtered.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<article class="contact-card"><div class="contact-main"><div class="contact-avatar">'+(c.kind==="company"?"▦":"♙")+'</div><div class="contact-info"><strong>'+escapeHtml(c.name)+'</strong><div class="muted">'+(c.kind==="company"?"Azienda":"Persona")+(c.company?" · "+escapeHtml(c.company):"")+'</div><div class="contact-details">'+(c.email?'<span>✉ '+escapeHtml(c.email)+'</span>':"")+(c.phone?'<span>☎ '+escapeHtml(c.phone)+'</span>':"")+(c.mobile?'<span>▣ '+escapeHtml(c.mobile)+'</span>':"")+(c.website?'<span>↗ '+escapeHtml(c.website)+'</span>':"")+(c.vat?'<span>ID: '+escapeHtml(c.vat)+'</span>':"")+(c.street||c.zip||c.city||c.country?'<span>⌖ '+[c.street,c.zip,c.city,c.country].filter(Boolean).map(escapeHtml).join(", ")+'</span>':"")+(c.notes?'<span>Note: '+escapeHtml(c.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-contact" data-id="'+c.id+'">Modifica</button><button class="action danger delete-contact" data-id="'+c.id+'">Elimina</button></div></article>').join(""):'<div class="empty">'+(term?"Nessun contatto corrisponde alla ricerca.":"La rubrica è vuota. Crea la prima scheda dal modulo qui sopra.")+'</div>')+'</div>';
+    '+historyPanel+'<div class="panel"><div class="panel-heading"><div><h2>Rubrica</h2><p class="muted">'+filtered.length+' contatti · '+contacts.filter(c=>c.kind==="person").length+' persone · '+contacts.filter(c=>c.kind==="company").length+' aziende</p></div></div><div class="toolbar"><label class="action secondary" for="contact-import-file">Importa Excel / CSV</label><input id="contact-import-file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div><p class="muted">File .xlsx o .csv con intestazioni nella prima riga. I duplicati vengono saltati.</p><div id="contact-import-preview"></div><input class="field" id="contact-search" type="search" placeholder="Cerca per nome, azienda, email, telefono, ID fiscale o città…" value="'+escapeHtml(contactSearch)+'">'+
+    (filtered.length?filtered.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<article class="contact-card"><div class="contact-main"><div class="contact-avatar">'+(c.kind==="company"?"▦":"♙")+'</div><div class="contact-info"><strong>'+escapeHtml(c.name)+'</strong><div class="muted">'+(c.kind==="company"?"Azienda":"Persona")+(c.company?" · "+escapeHtml(c.company):"")+'</div><div class="contact-details">'+(c.email?'<span>✉ '+escapeHtml(c.email)+'</span>':"")+(c.phone?'<span>☎ '+escapeHtml(c.phone)+'</span>':"")+(c.mobile?'<span>▣ '+escapeHtml(c.mobile)+'</span>':"")+(c.website?'<span>↗ '+escapeHtml(c.website)+'</span>':"")+(c.vat?'<span>ID: '+escapeHtml(c.vat)+'</span>':"")+(c.street||c.zip||c.city||c.country?'<span>⌖ '+[c.street,c.zip,c.city,c.country].filter(Boolean).map(escapeHtml).join(", ")+'</span>':"")+(c.notes?'<span>Note: '+escapeHtml(c.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary contact-history" data-id="'+c.id+'">Storico</button><button class="action secondary edit-contact" data-id="'+c.id+'">Modifica</button><button class="action danger delete-contact" data-id="'+c.id+'">Elimina</button></div></article>').join(""):'<div class="empty">'+(term?"Nessun contatto corrisponde alla ricerca.":"La rubrica è vuota. Crea la prima scheda dal modulo qui sopra.")+'</div>')+'</div>';
   document.getElementById("contact-import-file").onchange=async e=>{
     const file=e.target.files[0];if(!file)return;
     const preview=document.getElementById("contact-import-preview");
@@ -180,6 +198,8 @@ async function renderContacts(records){
   };
   const cancel=document.getElementById("cancel-edit");
   if(cancel)cancel.onclick=()=>{editingContactId=null;render()};
+  root.querySelectorAll(".contact-history").forEach(button=>button.onclick=()=>{viewingContactHistoryId=Number(button.dataset.id);render()});
+  const closeHistory=root.querySelector(".close-contact-history");if(closeHistory)closeHistory.onclick=()=>{viewingContactHistoryId=null;render()};
   root.querySelectorAll(".edit-contact").forEach(button=>button.onclick=()=>{editingContactId=Number(button.dataset.id);render()});
   root.querySelectorAll(".delete-contact").forEach(button=>button.onclick=async()=>{if(confirm("Eliminare definitivamente questo contatto da questo dispositivo?")){await deleteRecord(Number(button.dataset.id));await render()}});
 }
