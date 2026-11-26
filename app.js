@@ -57,7 +57,7 @@ function field(label,id,value,placeholder,type){
 }
 
 function normalizeImportHeader(value){
-  return String(value||"").normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  return String(value||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
 }
 const contactImportAliases={
   name:["nome","nominativo","denominazione","ragionesociale","contactname","name","fullname"],
@@ -74,8 +74,8 @@ const contactImportAliases={
   notes:["note","annotazioni","notes","commenti"]
 };
 function parseCSV(text){
-  const first=(text.split(/\\r?\\n/,1)[0]||"");
-  const delimiters=[";",",","\\t"];
+  const first=(text.split(/\r?\n/,1)[0]||"");
+  const delimiters=[";",",","\t"];
   const delimiter=delimiters.sort((a,b)=>first.split(b).length-first.split(a).length)[0];
   const rows=[];let row=[],cell="",quoted=false;
   for(let i=0;i<text.length;i++){
@@ -83,7 +83,7 @@ function parseCSV(text){
     if(ch==='"'&&quoted&&text[i+1]==='"'){cell+='"';i++}
     else if(ch==='"'){quoted=!quoted}
     else if(ch===delimiter&&!quoted){row.push(cell);cell=""}
-    else if((ch==="\\n"||ch==="\\r")&&!quoted){if(ch==="\\r"&&text[i+1]==="\\n")i++;row.push(cell);if(row.some(v=>v.trim()))rows.push(row);row=[];cell=""}
+    else if((ch==="\n"||ch==="\r")&&!quoted){if(ch==="\r"&&text[i+1]==="\n")i++;row.push(cell);if(row.some(v=>v.trim()))rows.push(row);row=[];cell=""}
     else cell+=ch;
   }
   row.push(cell);if(row.some(v=>v.trim()))rows.push(row);
