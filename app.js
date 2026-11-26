@@ -1,7 +1,7 @@
 const DB_NAME = "myerp-local";
 const DB_VERSION = 1;
 const STORE = "records";
-const labels = {dashboard:"Panoramica",contacts:"Contatti",sales:"Vendite",purchases:"Acquisti",inventory:"Magazzino",invoices:"Fatture",activities:"Attività",backup:"Backup"};
+const labels = {dashboard:"Panoramica",crm:"CRM",contacts:"Contatti",sales:"Vendite",purchases:"Acquisti",inventory:"Magazzino",invoices:"Fatturazione",activities:"Attività",documents:"Documenti",backup:"Backup e ripristino"};
 let db;
 let currentView = "dashboard";
 
@@ -31,14 +31,14 @@ function escapeHtml(value){return String(value??"").replace(/[&<>"']/g,c=>({"&":
 function setView(view){
   currentView=view;
   document.querySelectorAll(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
-  document.getElementById("page-title").textContent=labels[view];
+  document.getElementById("page-title").textContent=labels[view]||"MyERP";
   render();
 }
 async function render(){
   const root=document.getElementById("view");
   const records=await allRecords();
   if(currentView==="dashboard"){
-    root.innerHTML=`<div class="grid"><div class="metric"><small>Contatti</small><strong>${records.filter(r=>r.type==="contacts").length}</strong></div><div class="metric"><small>Vendite</small><strong>${records.filter(r=>r.type==="sales").length}</strong></div><div class="metric"><small>Elementi archiviati</small><strong>${records.length}</strong></div></div><div class="panel"><h2>Benvenuto in MyERP</h2><p class="muted">Questa è la prima versione della base del gestionale. I dati vengono salvati localmente in Safari su questo dispositivo.</p><div class="empty">Inizia aprendo una sezione dal menu. Le funzioni verranno aggiunte gradualmente.</div></div>`;
+    root.innerHTML=`<div class="grid"><div class="metric"><small>Contatti</small><strong>${records.filter(r=>r.type==="contacts").length}</strong></div><div class="metric"><small>Opportunità CRM</small><strong>${records.filter(r=>r.type==="crm").length}</strong></div><div class="metric"><small>Elementi archiviati</small><strong>${records.length}</strong></div></div><div class="panel"><h2>Panoramica</h2><p class="muted">Benvenuto in MyERP. Questa area diventerà il centro operativo del gestionale, con riepiloghi, attività e indicatori dei diversi moduli.</p><div class="empty">Seleziona un'applicazione dal menu. I dati vengono conservati nell'archivio locale di Safari.</div></div>`;
     return;
   }
   if(currentView==="backup"){
@@ -48,7 +48,8 @@ async function render(){
     return;
   }
   const moduleRecords=records.filter(r=>r.type===currentView);
-  root.innerHTML=`<div class="panel"><h2>Nuovo elemento</h2><form id="new-record"><label class="muted" for="record-name">Nome o descrizione</label><input class="field" id="record-name" maxlength="120" required placeholder="Inserisci un nome o una descrizione"><label class="muted" for="record-notes">Note (facoltative)</label><input class="field" id="record-notes" maxlength="500" placeholder="Aggiungi dettagli"><button class="action" type="submit">Salva elemento</button></form></div><div class="panel"><h2>Archivio</h2>${moduleRecords.length?moduleRecords.map(r=>`<div class="record"><strong>${escapeHtml(r.name)}</strong>${r.notes?`<div class="muted">${escapeHtml(r.notes)}</div>`:""}</div>`).join(""):'<div class="empty">Non ci sono ancora elementi in questa sezione.</div>'}</div>`;
+  const descriptions={crm:"Gestione delle opportunità e del rapporto con i potenziali clienti.",contacts:"Anagrafica di clienti, fornitori e altre aziende o persone.",sales:"Preventivi, ordini cliente e flusso delle vendite.",purchases:"Richieste, ordini fornitore e acquisti.",inventory:"Prodotti, giacenze e movimenti di magazzino.",invoices:"Fatture clienti e fornitori, con stato dei pagamenti.",activities:"Promemoria, appuntamenti e attività da completare.",documents:"Archivio dei documenti collegati alle attività aziendali."};
+  root.innerHTML=`<div class="panel"><h2>${labels[currentView]}</h2><p class="muted">${descriptions[currentView]||"Sezione del gestionale."}</p><form id="new-record"><label class="muted" for="record-name">Nome o descrizione</label><input class="field" id="record-name" maxlength="120" required placeholder="Inserisci un nome o una descrizione"><label class="muted" for="record-notes">Note (facoltative)</label><input class="field" id="record-notes" maxlength="500" placeholder="Aggiungi dettagli"><button class="action" type="submit">Crea</button></form></div><div class="panel"><h2>Elementi</h2>${moduleRecords.length?moduleRecords.map(r=>`<div class="record"><strong>${escapeHtml(r.name)}</strong>${r.notes?`<div class="muted">${escapeHtml(r.notes)}</div>`:""}</div>`).join(""):'<div class="empty">Nessun elemento presente. I registri specifici di questo modulo verranno sviluppati nella prossima fase.</div>'}</div>`;
   document.getElementById("new-record").onsubmit=async e=>{e.preventDefault();const name=document.getElementById("record-name").value.trim();if(!name)return;await addRecord({type:currentView,name,notes:document.getElementById("record-notes").value.trim()});render()};
 }
 document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=>setView(b.dataset.view)));
@@ -57,7 +58,7 @@ document.querySelectorAll(".nav-item").forEach(b=>b.addEventListener("click",()=
     db=await openDatabase();
     document.getElementById("connection").textContent="Archivio locale pronto";
     await render();
-    if("serviceWorker" in navigator){navigator.serviceWorker.register("./sw.js").catch(()=>{document.getElementById("connection").textContent="Modalità locale · cache da configurare"})}
+    if("serviceWorker" in navigator){navigator.serviceWorker.register("./sw.js").catch(()=>{document.getElementById("connection").textContent="Cache offline da configurare"})}
   }catch(error){
     document.getElementById("connection").textContent="Archivio non disponibile";
     document.getElementById("view").innerHTML='<div class="empty">Safari non ha potuto inizializzare l’archivio locale. Ricarica la pagina o prova in modalità navigazione normale.</div>';
