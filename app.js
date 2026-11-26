@@ -153,14 +153,17 @@ let salesSearch="";
 let salesStatusFilter="all";
 let editingSaleId=null;
 let saleDraftLines=[];
+let saleProductCatalog=[];
 const saleStatuses={draft:"Bozza",sent:"Inviato",confirmed:"Confermato",delivered:"Consegnato",cancelled:"Annullato"};
 function saleNumber(value){return new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(Number(value)||0)}
 function saleTotals(lines){return lines.reduce((sum,line)=>{const qty=Math.max(0,Number(line.quantity)||0),price=Math.max(0,Number(line.price)||0),discount=Math.min(100,Math.max(0,Number(line.discount)||0));return sum+qty*price*(1-discount/100)},0)}
 function renderSaleLines(){
   const host=document.getElementById("sale-lines");
   if(!host)return;
-  host.innerHTML=saleDraftLines.map((line,i)=>'<div class="form-grid sale-line" data-line="'+i+'"><div class="form-wide"><label class="form-label">Prodotto / servizio</label><input class="field sale-description" maxlength="160" value="'+escapeHtml(line.description)+'" placeholder="Descrizione articolo"></div><div><label class="form-label">Quantità</label><input class="field sale-quantity" type="number" min="0.01" step="0.01" value="'+escapeHtml(line.quantity)+'"></div><div><label class="form-label">Prezzo unitario (€)</label><input class="field sale-price" type="number" min="0" step="0.01" value="'+escapeHtml(line.price)+'"></div><div><label class="form-label">Sconto (%)</label><input class="field sale-discount" type="number" min="0" max="100" step="0.1" value="'+escapeHtml(line.discount)+'"></div><div><label class="form-label">Totale riga</label><strong class="sale-line-total">'+saleNumber((Number(line.quantity)||0)*(Number(line.price)||0)*(1-(Number(line.discount)||0)/100))+'</strong><button class="action danger sale-remove" type="button" data-index="'+i+'">Rimuovi riga</button></div></div>').join("");
+  const productOptions=selected=>'<option value="">— Articolo libero —</option>'+saleProductCatalog.map(p=>'<option value="'+p.id+'" '+(String(selected||"")===String(p.id)?"selected":"")+'>'+escapeHtml(p.name)+(p.sku?" · "+escapeHtml(p.sku):"")+'</option>').join("");
+  host.innerHTML=saleDraftLines.map((line,i)=>'<div class="form-grid sale-line" data-line="'+i+'"><div class="form-wide"><label class="form-label">Seleziona da anagrafica</label><select class="field sale-product">'+productOptions(line.productId)+'</select><label class="form-label">Descrizione</label><input class="field sale-description" maxlength="160" value="'+escapeHtml(line.description)+'" placeholder="Descrizione articolo"></div><div><label class="form-label">Quantità</label><input class="field sale-quantity" type="number" min="0.01" step="0.01" value="'+escapeHtml(line.quantity)+'"></div><div><label class="form-label">Prezzo unitario (€)</label><input class="field sale-price" type="number" min="0" step="0.01" value="'+escapeHtml(line.price)+'"></div><div><label class="form-label">Sconto (%)</label><input class="field sale-discount" type="number" min="0" max="100" step="0.1" value="'+escapeHtml(line.discount)+'"></div><div><label class="form-label">Totale riga</label><strong class="sale-line-total">'+saleNumber((Number(line.quantity)||0)*(Number(line.price)||0)*(1-(Number(line.discount)||0)/100))+'</strong><button class="action danger sale-remove" type="button" data-index="'+i+'">Rimuovi riga</button></div></div>').join("");
   host.querySelectorAll(".sale-line").forEach((row,i)=>{
+    row.querySelector(".sale-product").onchange=e=>{const p=saleProductCatalog.find(x=>x.id===Number(e.target.value));saleDraftLines[i].productId=p?p.id:null;if(p){saleDraftLines[i].description=p.name;saleDraftLines[i].price=Number(p.salePrice)||0;renderSaleLines()}};
     ["description","quantity","price","discount"].forEach(key=>{const cls={description:".sale-description",quantity:".sale-quantity",price:".sale-price",discount:".sale-discount"}[key];row.querySelector(cls).oninput=e=>{saleDraftLines[i][key]=e.target.value;const total=(Number(saleDraftLines[i].quantity)||0)*(Number(saleDraftLines[i].price)||0)*(1-(Number(saleDraftLines[i].discount)||0)/100);row.querySelector(".sale-line-total").textContent=saleNumber(total);document.getElementById("sale-grand-total").textContent=saleNumber(saleTotals(saleDraftLines))}});
   });
   host.querySelectorAll(".sale-remove").forEach(b=>b.onclick=()=>{saleDraftLines.splice(Number(b.dataset.index),1);renderSaleLines();document.getElementById("sale-grand-total").textContent=saleNumber(saleTotals(saleDraftLines))});
@@ -170,6 +173,7 @@ async function renderSales(records){
   const root=document.getElementById("view");
   const sales=records.filter(r=>r.type==="sales");
   const contacts=records.filter(r=>r.type==="contacts");
+  saleProductCatalog=records.filter(r=>r.type==="inventory_product");
   const editing=editingSaleId===null?null:sales.find(s=>s.id===editingSaleId);
   const val=k=>editing?(editing[k]??""):"";
   if(editing)saleDraftLines=(editing.lines||[]).map(x=>({...x}));else if(!saleDraftLines.length)saleDraftLines=[{description:"",quantity:1,price:0,discount:0}];
@@ -233,14 +237,17 @@ let purchaseSearch="";
 let purchaseStatusFilter="all";
 let editingPurchaseId=null;
 let purchaseDraftLines=[];
+let purchaseProductCatalog=[];
 const purchaseStatuses={draft:"Bozza",ordered:"Ordinato",received:"Ricevuto",cancelled:"Annullato"};
 function purchaseMoney(value){return new Intl.NumberFormat("it-IT",{style:"currency",currency:"EUR"}).format(Number(value)||0)}
 function purchaseTotal(lines){return lines.reduce((sum,line)=>sum+(Math.max(0,Number(line.quantity)||0)*Math.max(0,Number(line.price)||0)),0)}
 function renderPurchaseLines(){
   const host=document.getElementById("purchase-lines");
   if(!host)return;
-  host.innerHTML=purchaseDraftLines.map((line,i)=>'<div class="form-grid purchase-line"><div class="form-wide"><label class="form-label">Prodotto / servizio</label><input class="field purchase-description" maxlength="160" value="'+escapeHtml(line.description)+'" placeholder="Descrizione articolo"></div><div><label class="form-label">Quantità</label><input class="field purchase-quantity" type="number" min="0.01" step="0.01" value="'+escapeHtml(line.quantity)+'"></div><div><label class="form-label">Costo unitario (€)</label><input class="field purchase-price" type="number" min="0" step="0.01" value="'+escapeHtml(line.price)+'"></div><div><label class="form-label">Totale riga</label><strong class="purchase-line-total">'+purchaseMoney((Number(line.quantity)||0)*(Number(line.price)||0))+'</strong><button class="action danger purchase-remove" type="button" data-index="'+i+'">Rimuovi riga</button></div></div>').join("");
+  const productOptions=selected=>'<option value="">— Articolo libero —</option>'+purchaseProductCatalog.map(p=>'<option value="'+p.id+'" '+(String(selected||"")===String(p.id)?"selected":"")+'>'+escapeHtml(p.name)+(p.sku?" · "+escapeHtml(p.sku):"")+'</option>').join("");
+  host.innerHTML=purchaseDraftLines.map((line,i)=>'<div class="form-grid purchase-line"><div class="form-wide"><label class="form-label">Seleziona da anagrafica</label><select class="field purchase-product">'+productOptions(line.productId)+'</select><label class="form-label">Descrizione</label><input class="field purchase-description" maxlength="160" value="'+escapeHtml(line.description)+'" placeholder="Descrizione articolo"></div><div><label class="form-label">Quantità</label><input class="field purchase-quantity" type="number" min="0.01" step="0.01" value="'+escapeHtml(line.quantity)+'"></div><div><label class="form-label">Costo unitario (€)</label><input class="field purchase-price" type="number" min="0" step="0.01" value="'+escapeHtml(line.price)+'"></div><div><label class="form-label">Totale riga</label><strong class="purchase-line-total">'+purchaseMoney((Number(line.quantity)||0)*(Number(line.price)||0))+'</strong><button class="action danger purchase-remove" type="button" data-index="'+i+'">Rimuovi riga</button></div></div>').join("");
   host.querySelectorAll(".purchase-line").forEach((row,i)=>{
+    row.querySelector(".purchase-product").onchange=e=>{const p=purchaseProductCatalog.find(x=>x.id===Number(e.target.value));purchaseDraftLines[i].productId=p?p.id:null;if(p){purchaseDraftLines[i].description=p.name;purchaseDraftLines[i].price=Number(p.purchasePrice)||0;renderPurchaseLines()}};
     [["description",".purchase-description"],["quantity",".purchase-quantity"],["price",".purchase-price"]].forEach(([key,selector])=>row.querySelector(selector).oninput=e=>{
       purchaseDraftLines[i][key]=e.target.value;
       row.querySelector(".purchase-line-total").textContent=purchaseMoney((Number(purchaseDraftLines[i].quantity)||0)*(Number(purchaseDraftLines[i].price)||0));
@@ -254,6 +261,7 @@ async function renderPurchases(records){
   const root=document.getElementById("view");
   const purchases=records.filter(r=>r.type==="purchases");
   const contacts=records.filter(r=>r.type==="contacts");
+  purchaseProductCatalog=records.filter(r=>r.type==="inventory_product");
   const editing=editingPurchaseId===null?null:purchases.find(p=>p.id===editingPurchaseId);
   const val=k=>editing?(editing[k]??""):"";
   if(editing)purchaseDraftLines=(editing.lines||[]).map(x=>({...x}));
