@@ -55,6 +55,75 @@ function setView(view){
 function field(label,id,value,placeholder,type){
   return '<label class="form-label" for="'+id+'">'+label+'</label><input class="field" id="'+id+'" type="'+(type||"text")+'" maxlength="180" value="'+escapeHtml(value||"")+'" placeholder="'+(placeholder||"")+'">';
 }
+
+function normalizeImportHeader(value){
+  return String(value||"").normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]/g,"");
+}
+const contactImportAliases={
+  name:["nome","nominativo","denominazione","ragionesociale","contactname","name","fullname"],
+  company:["azienda","societa","company","impresa"],
+  email:["email","e-mail","posta elettronica","mail"],
+  phone:["telefono","tel","phone","telephone"],
+  mobile:["cellulare","mobile","cell"],
+  website:["sito","sitoweb","website","url"],
+  vat:["partitaiva","piva","id fiscale","codicefiscale","vat","taxid"],
+  street:["indirizzo","via","street","address"],
+  zip:["cap","postalcode","zipcode"],
+  city:["citta","comune","city"],
+  country:["paese","nazione","country"],
+  notes:["note","annotazioni","notes","commenti"]
+};
+function parseCSV(text){
+  const first=(text.split(/\\r?\\n/,1)[0]||"");
+  const delimiters=[";",",","\\t"];
+  const delimiter=delimiters.sort((a,b)=>first.split(b).length-first.split(a).length)[0];
+  const rows=[];let row=[],cell="",quoted=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(ch==='"'&&quoted&&text[i+1]==='"'){cell+='"';i++}
+    else if(ch==='"'){quoted=!quoted}
+    else if(ch===delimiter&&!quoted){row.push(cell);cell=""}
+    else if((ch==="\\n"||ch==="\\r")&&!quoted){if(ch==="\\r"&&text[i+1]==="\\n")i++;row.push(cell);if(row.some(v=>v.trim()))rows.push(row);row=[];cell=""}
+    else cell+=ch;
+  }
+  row.push(cell);if(row.some(v=>v.trim()))rows.push(row);
+  return rows;
+}
+function mapContactImportRows(rows){
+  if(!rows.length)throw new Error("Il file non contiene righe.");
+  const headers=rows[0].map(v=>String(v??"").trim());
+  const mapping={};
+  for(const [field,aliases] of Object.entries(contactImportAliases)){
+    const accepted=aliases.map(normalizeImportHeader);
+    const index=headers.findIndex(h=>accepted.includes(normalizeImportHeader(h)));
+    if(index>=0)mapping[field]=index;
+  }
+  if(mapping.name===undefined)throw new Error("Non trovo una colonna Nome/Denominazione. La prima riga deve contenere le intestazioni.");
+  return rows.slice(1).map(row=>{
+    const item={};
+    for(const field of Object.keys(contactImportAliases))item[field]=mapping[field]===undefined?"":String(row[mapping[field]]??"").trim();
+    item.kind=item.company?"company":"person";
+    return item;
+  }).filter(item=>item.name);
+}
+async function readContactImport(file){
+  const ext=(file.name.split(".").pop()||"").toLowerCase();
+  if(ext==="csv"){
+    let text=await file.text();
+    if(text.charCodeAt(0)===0xFEFF)text=text.slice(1);
+    return mapContactImportRows(parseCSV(text));
+  }
+  if(ext==="xlsx"){
+    if(!window.XLSX)throw new Error("Lettore Excel non disponibile. Collega l’iPad a Internet, ricarica MyERP e riprova.");
+    const data=await file.arrayBuffer();
+    const workbook=XLSX.read(data,{type:"array"});
+    const first=workbook.SheetNames[0];
+    if(!first)throw new Error("Il file Excel non contiene fogli.");
+    return mapContactImportRows(XLSX.utils.sheet_to_json(workbook.Sheets[first],{header:1,defval:"",raw:false}));
+  }
+  throw new Error("Formato non supportato. Seleziona un file .xlsx o .csv.");
+}
+
 async function renderContacts(records){
   const root=document.getElementById("view");
   const contacts=records.filter(r=>r.type==="contacts");
@@ -79,8 +148,27 @@ async function renderContacts(records){
     '<div>'+field("Paese","contact-country",value("country"),"Paese")+'</div>'+
     '<div class="form-wide"><label class="form-label" for="contact-notes">Note</label><textarea class="field" id="contact-notes" rows="3" maxlength="1000" placeholder="Annotazioni sul contatto">'+escapeHtml(value("notes"))+'</textarea></div>'+
     '</div><div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Crea contatto")+'</button>'+(editing?'<button class="action secondary" type="button" id="cancel-edit">Annulla</button>':"")+'</div></form></div>'+
-    '<div class="panel"><div class="panel-heading"><div><h2>Rubrica</h2><p class="muted">'+filtered.length+' contatti · '+contacts.filter(c=>c.kind==="person").length+' persone · '+contacts.filter(c=>c.kind==="company").length+' aziende</p></div></div><input class="field" id="contact-search" type="search" placeholder="Cerca per nome, azienda, email, telefono, ID fiscale o città…" value="'+escapeHtml(contactSearch)+'">'+
+    '<div class="panel"><div class="panel-heading"><div><h2>Rubrica</h2><p class="muted">'+filtered.length+' contatti · '+contacts.filter(c=>c.kind==="person").length+' persone · '+contacts.filter(c=>c.kind==="company").length+' aziende</p></div></div><div class="toolbar"><label class="action secondary" for="contact-import-file">Importa Excel / CSV</label><input id="contact-import-file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div><p class="muted">File .xlsx o .csv con intestazioni nella prima riga. I duplicati vengono saltati.</p><div id="contact-import-preview"></div><input class="field" id="contact-search" type="search" placeholder="Cerca per nome, azienda, email, telefono, ID fiscale o città…" value="'+escapeHtml(contactSearch)+'">'+
     (filtered.length?filtered.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<article class="contact-card"><div class="contact-main"><div class="contact-avatar">'+(c.kind==="company"?"▦":"♙")+'</div><div class="contact-info"><strong>'+escapeHtml(c.name)+'</strong><div class="muted">'+(c.kind==="company"?"Azienda":"Persona")+(c.company?" · "+escapeHtml(c.company):"")+'</div><div class="contact-details">'+(c.email?'<span>✉ '+escapeHtml(c.email)+'</span>':"")+(c.phone?'<span>☎ '+escapeHtml(c.phone)+'</span>':"")+(c.mobile?'<span>▣ '+escapeHtml(c.mobile)+'</span>':"")+(c.website?'<span>↗ '+escapeHtml(c.website)+'</span>':"")+(c.vat?'<span>ID: '+escapeHtml(c.vat)+'</span>':"")+(c.street||c.zip||c.city||c.country?'<span>⌖ '+[c.street,c.zip,c.city,c.country].filter(Boolean).map(escapeHtml).join(", ")+'</span>':"")+(c.notes?'<span>Note: '+escapeHtml(c.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary edit-contact" data-id="'+c.id+'">Modifica</button><button class="action danger delete-contact" data-id="'+c.id+'">Elimina</button></div></article>').join(""):'<div class="empty">'+(term?"Nessun contatto corrisponde alla ricerca.":"La rubrica è vuota. Crea la prima scheda dal modulo qui sopra.")+'</div>')+'</div>';
+  document.getElementById("contact-import-file").onchange=async e=>{
+    const file=e.target.files[0];if(!file)return;
+    const preview=document.getElementById("contact-import-preview");
+    try{
+      const imported=await readContactImport(file);
+      if(!imported.length)throw new Error("Non ho trovato righe con un nome valorizzato.");
+      const existing=await allRecords();
+      const keys=new Set(existing.filter(r=>r.type==="contacts").map(c=>[c.email,c.vat,c.name].map(v=>String(v||"").trim().toLowerCase()).join("|")));
+      const fresh=imported.filter(c=>!keys.has([c.email,c.vat,c.name].map(v=>String(v||"").trim().toLowerCase()).join("|")));
+      preview.innerHTML='<div class="panel"><strong>Anteprima importazione</strong><p class="muted">'+imported.length+' righe valide · '+fresh.length+' nuove · '+(imported.length-fresh.length)+' possibili duplicati</p><div class="contact-details">'+imported.slice(0,5).map(c=>'<span>'+escapeHtml(c.name)+(c.email?' · '+escapeHtml(c.email):'')+'</span>').join("")+'</div><div class="toolbar"><button class="action" id="confirm-contact-import" type="button">Importa '+fresh.length+' contatti</button><button class="action secondary" id="cancel-contact-import" type="button">Annulla</button></div></div>';
+      document.getElementById("cancel-contact-import").onclick=()=>{preview.innerHTML="";e.target.value=""};
+      document.getElementById("confirm-contact-import").onclick=async()=>{
+        let count=0;
+        for(const c of fresh){await addRecord({type:"contacts",kind:c.kind,name:c.name,company:c.company,email:c.email,phone:c.phone,mobile:c.mobile,website:c.website,vat:c.vat,street:c.street,zip:c.zip,city:c.city,country:c.country,notes:c.notes});count++}
+        alert("Importazione completata: "+count+" contatti aggiunti. I possibili duplicati sono stati saltati.");
+        contactSearch="";await render();
+      };
+    }catch(err){preview.innerHTML='<p class="muted">'+escapeHtml(err.message)+'</p>';alert("Importazione non riuscita: "+err.message)}
+  };
   document.getElementById("contact-search").addEventListener("input",e=>{contactSearch=e.target.value;const pos=e.target.selectionStart;render().then(()=>{const input=document.getElementById("contact-search");input.focus();input.setSelectionRange(pos,pos)})});
   document.getElementById("contact-form").onsubmit=async e=>{
     e.preventDefault();
