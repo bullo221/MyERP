@@ -132,8 +132,29 @@ function mapContactImportRows(rows){
     return item;
   }).filter(item=>item.name);
 }
+function parseVCard(text){
+  const unfolded=text.replace(/\\r?\\n[ \\t]/g,"");
+  const cards=unfolded.split(/BEGIN:VCARD/i).slice(1).map(part=>part.split(/END:VCARD/i)[0]);
+  const unescapeVCard=v=>String(v||"").replace(/\\\\n/gi,", ").replace(/\\\\,/g,",").replace(/\\\\;/g,";").replace(/\\\\\\\\/g,"\\\\").trim();
+  const get=(card,key)=>{
+    const re=new RegExp("^"+key+"(?:;[^:]*)?:(.*)$","im");
+    const m=card.match(re);return m?unescapeVCard(m[1]):"";
+  };
+  return cards.map(card=>{
+    const name=get(card,"FN")||get(card,"N").split(";").reverse().filter(Boolean).join(" ");
+    const org=get(card,"ORG").split(";")[0]||"";
+    const email=(card.match(/^EMAIL(?:;[^:]*)?:(.*)$/im)||[])[1]||"";
+    const phones=Array.from(card.matchAll(/^TEL(?:;[^:]*)?:(.*)$/gim)).map(m=>unescapeVCard(m[1]));
+    const adr=get(card,"ADR").split(";");
+    const isCompany=/^(?:KIND:org|X-ABShowAs:COMPANY)$/im.test(card);
+    return {name,kind:isCompany?"company":"person",company:isCompany?"":org,email:unescapeVCard(email),phone:phones[0]||"",mobile:phones[1]||"",website:get(card,"URL"),vat:"",street:[adr[2],adr[1]].filter(Boolean).join(" "),zip:adr[5]||"",city:adr[3]||"",country:adr[6]||"",notes:get(card,"NOTE")};
+  }).filter(c=>c.name);
+}
 async function readContactImport(file){
   const ext=(file.name.split(".").pop()||"").toLowerCase();
+  if(ext==="vcf"||ext==="vcard"){
+    return parseVCard(await file.text());
+  }
   if(ext==="csv"){
     let text=await file.text();
     if(text.charCodeAt(0)===0xFEFF)text=text.slice(1);
@@ -147,7 +168,7 @@ async function readContactImport(file){
     if(!first)throw new Error("Il file Excel non contiene fogli.");
     return mapContactImportRows(XLSX.utils.sheet_to_json(workbook.Sheets[first],{header:1,defval:"",raw:false}));
   }
-  throw new Error("Formato non supportato. Seleziona un file .xlsx o .csv.");
+  throw new Error("Formato non supportato. Seleziona un file .vcf, .xlsx o .csv.");
 }
 
 function contactHistoryHtml(records, contact){
@@ -192,7 +213,7 @@ async function renderContacts(records){
     '<div>'+field("Paese","contact-country",value("country"),"Paese")+'</div>'+
     '<div class="form-wide"><label class="form-label" for="contact-notes">Note</label><textarea class="field" id="contact-notes" rows="3" maxlength="1000" placeholder="Annotazioni sul contatto">'+escapeHtml(value("notes"))+'</textarea></div>'+
     '</div><div class="toolbar"><button class="action" type="submit">'+(editing?"Salva modifiche":"Crea contatto")+'</button>'+(editing?'<button class="action secondary" type="button" id="cancel-edit">Annulla</button>':"")+'</div></form></div>'+
-    historyPanel+'<div class="panel"><div class="panel-heading"><div><h2>Rubrica</h2><p class="muted">'+filtered.length+' contatti · '+contacts.filter(c=>c.kind==="person").length+' persone · '+contacts.filter(c=>c.kind==="company").length+' aziende</p></div></div><div class="toolbar"><label class="action secondary" for="contact-import-file">Importa Excel / CSV</label><input id="contact-import-file" type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div><p class="muted">File .xlsx o .csv con intestazioni nella prima riga. I duplicati vengono saltati.</p><div id="contact-import-preview"></div><input class="field" id="contact-search" type="search" placeholder="Cerca per nome, azienda, email, telefono, ID fiscale o città…" value="'+escapeHtml(contactSearch)+'">'+
+    historyPanel+'<div class="panel"><div class="panel-heading"><div><h2>Rubrica</h2><p class="muted">'+filtered.length+' contatti · '+contacts.filter(c=>c.kind==="person").length+' persone · '+contacts.filter(c=>c.kind==="company").length+' aziende</p></div></div><div class="toolbar"><label class="action secondary" for="contact-import-file">Importa contatti</label><input id="contact-import-file" type="file" accept=".vcf,.vcard,.xlsx,.csv,text/vcard,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div><p class="muted">File .vcf (vCard), .xlsx o .csv con intestazioni nella prima riga. I duplicati vengono saltati.</p><div id="contact-import-preview"></div><input class="field" id="contact-search" type="search" placeholder="Cerca per nome, azienda, email, telefono, ID fiscale o città…" value="'+escapeHtml(contactSearch)+'">'+
     (filtered.length?filtered.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"","it")).map(c=>'<article class="contact-card"><div class="contact-main"><div class="contact-avatar">'+(c.kind==="company"?"▦":"♙")+'</div><div class="contact-info"><strong>'+escapeHtml(c.name)+'</strong><div class="muted">'+(c.kind==="company"?"Azienda":"Persona")+(c.company?" · "+escapeHtml(c.company):"")+'</div><div class="contact-details">'+(c.email?'<span>✉ '+escapeHtml(c.email)+'</span>':"")+(c.phone?'<span>☎ '+escapeHtml(c.phone)+'</span>':"")+(c.mobile?'<span>▣ '+escapeHtml(c.mobile)+'</span>':"")+(c.website?'<span>↗ '+escapeHtml(c.website)+'</span>':"")+(c.vat?'<span>ID: '+escapeHtml(c.vat)+'</span>':"")+(c.street||c.zip||c.city||c.country?'<span>⌖ '+[c.street,c.zip,c.city,c.country].filter(Boolean).map(escapeHtml).join(", ")+'</span>':"")+(c.notes?'<span>Note: '+escapeHtml(c.notes)+'</span>':"")+'</div></div></div><div class="contact-actions"><button class="action secondary contact-history" data-id="'+c.id+'">Storico</button><button class="action secondary edit-contact" data-id="'+c.id+'">Modifica</button><button class="action danger delete-contact" data-id="'+c.id+'">Elimina</button></div></article>').join(""):'<div class="empty">'+(term?"Nessun contatto corrisponde alla ricerca.":"La rubrica è vuota. Crea la prima scheda dal modulo qui sopra.")+'</div>')+'</div>';
   document.getElementById("contact-import-file").onchange=async e=>{
     const file=e.target.files[0];if(!file)return;
@@ -207,7 +228,7 @@ async function renderContacts(records){
       document.getElementById("cancel-contact-import").onclick=()=>{preview.innerHTML="";e.target.value=""};
       document.getElementById("confirm-contact-import").onclick=async()=>{
         let count=0;
-        for(const c of fresh){await addRecord({type:"contacts",kind:c.kind,name:c.name,company:c.company,email:c.email,phone:c.phone,mobile:c.mobile,website:c.website,vat:c.vat,street:c.street,zip:c.zip,city:c.city,country:c.country,notes:c.notes});count++}
+        for(const c of fresh){const linkedCompany=contacts.find(x=>x.kind==="company"&&(x.name||"").trim().toLocaleLowerCase()===(c.company||"").trim().toLocaleLowerCase());await addRecord({type:"contacts",kind:c.kind,name:c.name,company:c.company,companyId:linkedCompany?linkedCompany.id:"",email:c.email,phone:c.phone,mobile:c.mobile,website:c.website,vat:c.vat,street:c.street,zip:c.zip,city:c.city,country:c.country,notes:c.notes});count++}
         alert("Importazione completata: "+count+" contatti aggiunti. I possibili duplicati sono stati saltati.");
         contactSearch="";await render();
       };
