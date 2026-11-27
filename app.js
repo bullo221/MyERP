@@ -58,11 +58,11 @@ function field(label,id,value,placeholder,type){
 }
 
 
-function linkedPartyId(record,contacts,kind){
+function linkedPartyId(record,contacts,kind,legacyField="contactId"){
   if(!record)return "";
-  const direct=kind==="company"?record.companyId:record.contactId;
-  if(direct)return direct;
-  const legacy=contacts.find(c=>c.id===record.contactId);
+  const direct=kind==="company"?record.companyId:(legacyField==="supplierId"?record.supplierContactId||record.supplierId:record.contactId);
+  if(direct&&contacts.some(c=>c.id===direct&&c.kind===kind))return direct;
+  const legacy=contacts.find(c=>c.id===direct);
   return legacy&&legacy.kind===kind?legacy.id:"";
 }
 function contactPickerMarkup(id,contacts,selectedId,emptyLabel,kind){
@@ -422,7 +422,7 @@ async function renderPurchases(records){
   root.innerHTML='<div class="grid"><div class="metric"><small>Documenti acquisto</small><strong>'+purchases.length+'</strong></div><div class="metric"><small>Valore complessivo</small><strong>'+purchaseMoney(sum)+'</strong></div><div class="metric"><small>Ordini da ricevere</small><strong>'+purchases.filter(p=>p.status==="ordered").length+'</strong></div></div>'+
   '<div class="panel"><div class="panel-heading"><div><h2>'+(editing?"Modifica acquisto":"Nuova richiesta / ordine fornitore")+'</h2><p class="muted">Registra gli acquisti e controlla la ricezione della merce o dei servizi.</p></div></div>'+
   '<form id="purchase-form"><div class="form-grid"><div class="form-wide"><label class="form-label" for="purchase-title">Oggetto / riferimento *</label><input class="field" id="purchase-title" required maxlength="180" value="'+escapeHtml(val("name"))+'" placeholder="Es. Acquisto materiale ufficio"></div>'+
-  '<div><label class="form-label" for="purchase-supplier-search">Fornitore</label>' + contactPickerMarkup("purchase-supplier",contacts,editing?editing.supplierId:"","Nessun contatto","person")+'<div><label class="form-label" for="purchase-company-search">Azienda</label>' + contactPickerMarkup("purchase-company",contacts,linkedPartyId(editing,contacts,"company"),"Nessuna azienda","company") + '</div>'+ + '</div>'+
+  '<div><label class="form-label" for="purchase-supplier-search">Fornitore</label>' + contactPickerMarkup("purchase-supplier",contacts,linkedPartyId(editing,contacts,"person","supplierId"),"Nessun contatto","person")+'<div><label class="form-label" for="purchase-company-search">Azienda</label>' + contactPickerMarkup("purchase-company",contacts,linkedPartyId(editing,contacts,"company","supplierId"),"Nessuna azienda","company") + '</div>'+ + '</div>'+
   '<div><label class="form-label" for="purchase-status">Stato</label><select class="field" id="purchase-status">'+Object.entries(purchaseStatuses).map(([k,v])=>'<option value="'+k+'" '+(val("status")===k||(!val("status")&&k==="draft")?"selected":"")+'>'+v+'</option>').join("")+'</select></div>'+
   '<div><label class="form-label" for="purchase-date">Data ordine</label><input class="field" type="date" id="purchase-date" value="'+escapeHtml(val("date")||new Date().toISOString().slice(0,10))+'"></div>'+
   '<div><label class="form-label" for="purchase-delivery">Consegna prevista</label><input class="field" type="date" id="purchase-delivery" value="'+escapeHtml(val("expectedDelivery"))+'"></div>'+
