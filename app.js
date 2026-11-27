@@ -180,7 +180,7 @@ async function renderContacts(records){
     '<form id="contact-form"><div class="form-grid">'+
     '<div><label class="form-label" for="contact-kind">Type de contact</label><select class="field" id="contact-kind"><option value="person" '+(value("kind")!=="company"?"selected":"")+'>Personne</option><option value="company" '+(value("kind")==="company"?"selected":"")+'>Entreprise</option></select></div>'+
     '<div>'+field("Nome / denominazione","contact-name",value("name"),"Nome completo o ragione sociale")+'</div>'+
-    '<div>'+field("Azienda","contact-company",value("company"),"Azienda di appartenenza")+'</div>'+
+    '<div><label class="form-label" for="contact-company-search">Azienda di appartenenza</label>' + contactPickerMarkup("contact-company",contacts,editing?(editing.companyId||((contacts.find(c=>c.kind==="company"&&(c.name||"").toLocaleLowerCase()===(editing.company||"").toLocaleLowerCase())||{}).id||"")):"","Nessuna azienda","company") + '</div>'+
     '<div>'+field("Email","contact-email",value("email"),"nome@azienda.it","email")+'</div>'+
     '<div>'+field("Telefono","contact-phone",value("phone"),"+39…","tel")+'</div>'+
     '<div>'+field("Cellulare","contact-mobile",value("mobile"),"+39…","tel")+'</div>'+
@@ -218,7 +218,9 @@ async function renderContacts(records){
     e.preventDefault();
     const name=document.getElementById("contact-name").value.trim();
     if(!name){alert("Inserisci il nome o la denominazione.");return}
-    const contact={type:"contacts",kind:document.getElementById("contact-kind").value,name,company:document.getElementById("contact-company").value.trim(),email:document.getElementById("contact-email").value.trim(),phone:document.getElementById("contact-phone").value.trim(),mobile:document.getElementById("contact-mobile").value.trim(),website:document.getElementById("contact-website").value.trim(),vat:document.getElementById("contact-vat").value.trim(),street:document.getElementById("contact-street").value.trim(),zip:document.getElementById("contact-zip").value.trim(),city:document.getElementById("contact-city").value.trim(),country:document.getElementById("contact-country").value.trim(),notes:document.getElementById("contact-notes").value.trim()};
+    const selectedCompanyId=document.getElementById("contact-company").value;
+    const selectedCompany=contacts.find(c=>c.id===selectedCompanyId&&c.kind==="company");
+    const contact={type:"contacts",kind:document.getElementById("contact-kind").value,name,companyId:selectedCompany?selectedCompany.id:"",company:selectedCompany?selectedCompany.name:"",email:document.getElementById("contact-email").value.trim(),phone:document.getElementById("contact-phone").value.trim(),mobile:document.getElementById("contact-mobile").value.trim(),website:document.getElementById("contact-website").value.trim(),vat:document.getElementById("contact-vat").value.trim(),street:document.getElementById("contact-street").value.trim(),zip:document.getElementById("contact-zip").value.trim(),city:document.getElementById("contact-city").value.trim(),country:document.getElementById("contact-country").value.trim(),notes:document.getElementById("contact-notes").value.trim()};
     if(editing){contact.id=editing.id;contact.createdAt=editing.createdAt;contact.updatedAt=new Date().toISOString();await updateRecord(contact)}else{await addRecord(contact)}
     editingContactId=null;contactSearch="";await render();
   };
